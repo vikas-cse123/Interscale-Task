@@ -24,6 +24,7 @@ import {
   buildMultiProjectAssigneeScopeClause,
   isAssigneeScopeSessionExempt,
 } from "../shared/assignee-task-scope";
+import { normalizeTimeZone } from "../shared/timezone";
 
 export default class HomePageController extends WorklenzControllerBase {
 
@@ -322,7 +323,7 @@ export default class HomePageController extends WorklenzControllerBase {
   public static async getUnassignedTasks(req: IWorkLenzRequest, res: IWorkLenzResponse): Promise<IWorkLenzResponse> {
     const teamId = req.user?.team_id as string;
     const userId = req.user?.id as string;
-    const timeZone = (req.query.time_zone as string) || "UTC";
+    const timeZone = normalizeTimeZone(req.query.time_zone);
 
     const values: unknown[] = [];
     const filterClause = buildTaskFilterClauses(req.query, values, this.BASE_PARAM_OFFSET, this.TZ_PARAM_INDEX);
@@ -435,7 +436,7 @@ export default class HomePageController extends WorklenzControllerBase {
   public static async getMyProgress(req: IWorkLenzRequest, res: IWorkLenzResponse): Promise<IWorkLenzResponse> {
     const teamId = req.user?.team_id;
     const userId = req.user?.id;
-    const timeZone = (req.query.time_zone as string) || "UTC";
+    const timeZone = normalizeTimeZone(req.query.time_zone);
 
     const currentGroup = this.isValidGroup(req.query.group_by as string) ? req.query.group_by : this.GROUP_BY_ASSIGNED_TO_ME;
     const groupByClosure = this.getTasksByGroupClosure(currentGroup as string);
@@ -548,7 +549,7 @@ export default class HomePageController extends WorklenzControllerBase {
   public static async getTaskStats(req: IWorkLenzRequest, res: IWorkLenzResponse): Promise<IWorkLenzResponse> {
     const teamId = req.user?.team_id;
     const userId = req.user?.id;
-    const timeZone = (req.query.time_zone as string) || "UTC";
+    const timeZone = normalizeTimeZone(req.query.time_zone);
     const today = new Date();
 
     const currentGroup = this.isValidGroup(req.query.group_by as string) ? req.query.group_by : this.GROUP_BY_ASSIGNED_TO_ME;
@@ -633,7 +634,7 @@ export default class HomePageController extends WorklenzControllerBase {
   public static async getTasks(req: IWorkLenzRequest, res: IWorkLenzResponse): Promise<IWorkLenzResponse> {
     const teamId = req.user?.team_id as string;
     const userId = req.user?.id as string;
-    const timeZone = (req.query.time_zone as string) || "UTC";
+    const timeZone = normalizeTimeZone(req.query.time_zone);
     const today = new Date();
 
     const currentGroup = this.isValidGroup(req.query.group_by as string) ? req.query.group_by : this.GROUP_BY_ASSIGNED_TO_ME;

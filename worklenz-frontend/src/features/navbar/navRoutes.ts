@@ -43,7 +43,6 @@ export const navRoutes: NavRoutesType[] = [
     path: '/worklenz/client-portal',
     adminOnly: true,
     freePlanFeature: false,
-    selfHostedExcluded: true,
   },
   {
     name: 'finance',

@@ -7,6 +7,7 @@ import db from "../../config/db";
 import { sendEmail, EmailRequest } from "../../shared/email";
 import { generateInvitationEmailHTML } from "./helpers";
 import TokenService from "../../services/token-service";
+import { getClientPortalBaseUrl } from "../../cron_jobs/helpers";
 
 export default class ClientPortalTeamController extends ClientPortalControllerBase {
 
@@ -140,7 +141,7 @@ export default class ClientPortalTeamController extends ClientPortalControllerBa
       });
 
       // Generate invitation link
-      const inviteLink = `${process.env.CLIENT_PORTAL_HOSTNAME ? `https://${process.env.CLIENT_PORTAL_HOSTNAME}` : "http://localhost:5174"}/invitation?token=${inviteToken}`;
+      const inviteLink = `${getClientPortalBaseUrl() || "http://localhost:5174"}/invitation?token=${inviteToken}`;
 
       // Generate email HTML
       const emailHtml = generateInvitationEmailHTML({
@@ -514,11 +515,7 @@ export default class ClientPortalTeamController extends ClientPortalControllerBa
       );
 
       // Generate new invitation link (URL-encode to handle + characters in token)
-      const inviteLink = `${
-        process.env.CLIENT_PORTAL_HOSTNAME
-          ? `https://${process.env.CLIENT_PORTAL_HOSTNAME}`
-          : "http://localhost:5174"
-      }/invitation?token=${encodeURIComponent(newToken)}`;
+      const inviteLink = `${getClientPortalBaseUrl() || "http://localhost:5174"}/invitation?token=${encodeURIComponent(newToken)}`;
 
       // Generate email HTML
       const emailHtml = generateInvitationEmailHTML({

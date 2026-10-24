@@ -1,7 +1,14 @@
 import { getBaseUrl } from "../cron_jobs/helpers";
 
+function getPublicBaseUrl(): string {
+  const configuredUrl = (process.env.BACKEND_PUBLIC_URL || "").trim();
+  if (!configuredUrl) return getBaseUrl();
+
+  return configuredUrl.replace(/\/+$/, "");
+}
+
 export const buildUnsubscribeUrl = (token: string): string => {
-  return `${getBaseUrl()}/public/digest/unsubscribe?token=${encodeURIComponent(token)}`;
+  return `${getPublicBaseUrl()}/public/digest/unsubscribe?token=${encodeURIComponent(token)}`;
 };
 
 export const buildManagePreferencesUrl = (): string => {

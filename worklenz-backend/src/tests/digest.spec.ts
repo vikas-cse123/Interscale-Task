@@ -194,6 +194,23 @@ describe("digest unsubscribe", () => {
     expect(url).not.toContain("/api/v1/");
   });
 
+  it("uses the configured backend public origin for unsubscribe links", () => {
+    const original = process.env.BACKEND_PUBLIC_URL;
+    process.env.BACKEND_PUBLIC_URL = "http://localhost:3001/";
+
+    try {
+      expect(buildUnsubscribeUrl("abc123")).toBe(
+        "http://localhost:3001/public/digest/unsubscribe?token=abc123"
+      );
+    } finally {
+      if (original === undefined) {
+        delete process.env.BACKEND_PUBLIC_URL;
+      } else {
+        process.env.BACKEND_PUBLIC_URL = original;
+      }
+    }
+  });
+
   it("disables all three digest types without a session", async () => {
     mockedDb.query
       .mockResolvedValueOnce({ rows: [{ user_id: "user-1", used_at: null }] })

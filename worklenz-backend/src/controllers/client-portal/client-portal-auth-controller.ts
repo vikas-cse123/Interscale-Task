@@ -1074,11 +1074,7 @@ export default class ClientPortalAuthController extends ClientPortalControllerBa
       ]);
 
       // Generate organization portal link with secure token (URL-encode to handle + characters in JWT)
-      const portalLink = `${
-        process.env.CLIENT_PORTAL_HOSTNAME
-          ? `https://${process.env.CLIENT_PORTAL_HOSTNAME}`
-          : "http://localhost:5174"
-      }/organization-invite?token=${encodeURIComponent(inviteToken)}`;
+      const portalLink = `${getClientPortalBaseUrl() || "http://localhost:5174"}/organization-invite?token=${encodeURIComponent(inviteToken)}`;
 
       return res.json(
         new ServerResponse(

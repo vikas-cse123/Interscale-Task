@@ -11,13 +11,31 @@ export function mapMembersWithAnd(members: string) {
   return "";
 }
 
+function trimTrailingSlashes(value: string) {
+  return value.replace(/\/+$/, "");
+}
+
+function hasScheme(value: string) {
+  return /^https?:\/\//i.test(value);
+}
+
 export function getBaseUrl() {
-  if (isLocalServer()) return `http://${process.env.FRONTEND_URL}`;
-  return `https://${process.env.FRONTEND_URL}`;
+  const configuredUrl = (process.env.FRONTEND_URL || "").trim();
+  if (!configuredUrl) return "";
+
+  const normalizedUrl = trimTrailingSlashes(configuredUrl);
+  if (hasScheme(normalizedUrl)) return normalizedUrl;
+
+  return `${isLocalServer() ? "http" : "https"}://${normalizedUrl}`;
 }
 
 export function getClientPortalBaseUrl() {
-  const hostname = process.env.CLIENT_PORTAL_HOSTNAME || "";
+  const configuredHostname = (process.env.CLIENT_PORTAL_HOSTNAME || "").trim();
+  if (!configuredHostname) return "";
+
+  const hostname = trimTrailingSlashes(configuredHostname);
+  if (hasScheme(hostname)) return hostname;
+
   const isLocalHostname = /^(localhost|127\.0\.0\.1)(:\d+)?$/.test(hostname);
   if (isLocalServer() || isLocalHostname) return `http://${hostname}`;
   return `https://${hostname}`;
