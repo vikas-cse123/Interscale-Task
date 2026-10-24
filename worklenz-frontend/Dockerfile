@@ -1,5 +1,7 @@
 FROM node:22-alpine AS build
 
+ARG RELEASE_VERSION
+
 WORKDIR /app
 
 COPY package.json package-lock.json ./
@@ -14,6 +16,7 @@ RUN echo "window.VITE_API_URL='${VITE_API_URL:-http://backend:3000}';" > ./publi
     echo "window.VITE_APP_VERSION='${VITE_APP_VERSION:-}';" >> ./public/env-config.js
 
 RUN NODE_OPTIONS="--max-old-space-size=4096" npm run build
+RUN printf '%s\n' "$RELEASE_VERSION" > /app/build/release.txt
 
 FROM node:22-alpine AS production
 

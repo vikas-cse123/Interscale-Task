@@ -126,7 +126,7 @@ rollback_service() {
   fi
   echo "Rolling back $svc to $backup_ref ..."
   docker tag "$backup_ref" "$stable"
-  (cd "$DIR" && docker compose up -d "$svc")
+  (cd "$DIR" && docker compose up -d --no-deps "$svc")
   sleep 8
   if wait_healthy "$svc"; then
     echo "ROLLED-BACK: $svc restored to pre-deploy image."
@@ -166,6 +166,20 @@ fi
 [ -n "$INCOMING" ] || { echo "ERROR: --incoming is required (unless --dry-run)" >&2; exit 2; }
 ls "$INCOMING"/*.tar.gz >/dev/null 2>&1 || { echo "ERROR: no image tarballs in $INCOMING" >&2; exit 2; }
 
+# Preserve running images BEFORE docker load can move the stable tags.
+declare -A ROLLBACK_REFS
+for svc in $SERVICES; do
+  stable="$(image_for "$svc")"
+  container="$(container_for "$svc")"
+  running_image="$(docker inspect -f '{{.Image}}' "$container")"
+  docker image inspect "$running_image" >/dev/null
+  repo="${stable%%:*}"
+  backup_ref="$repo:ci-backup-$TS"
+  docker tag "$running_image" "$backup_ref"
+  ROLLBACK_REFS["$svc"]="$backup_ref"
+  echo "Backup: running $svc image $running_image -> $backup_ref"
+done
+
 # Load CI-built images once up front (each carries its stable tag).
 # Services are still recreated one by one below, so an image for service B
 # sitting loaded while service A deploys changes nothing until A is recreated.
@@ -179,20 +193,12 @@ for svc in $SERVICES; do
   stable="$(image_for "$svc")"
   [ -n "$stable" ] || { echo "ERROR: no stable image tag configured for $svc" >&2; FAILED="$FAILED $svc"; continue; }
 
-  # 1. Preserve the currently running image under a timestamped backup tag.
-  BACKUP_REF=""
-  if docker image inspect "$stable" >/dev/null 2>&1; then
-    repo="${stable%%:*}"
-    BACKUP_REF="$repo:ci-backup-$TS"
-    docker tag "$stable" "$BACKUP_REF"
-    echo "Backup: $stable -> $BACKUP_REF"
-  else
-    echo "WARNING: stable image $stable not present locally; rollback for $svc will be unavailable."
-  fi
+  # 1. Use the pre-load snapshot of the actually running image.
+  BACKUP_REF="${ROLLBACK_REFS[$svc]}"
 
   # 2. Recreate ONLY this service (dependencies are only health-checked, never recreated).
   echo "Recreating service: $svc"
-  (cd "$DIR" && docker compose up -d "$svc")
+  (cd "$DIR" && docker compose up -d --no-deps "$svc")
 
   # 3. Verify health; roll back only when a backup was preserved.
   if wait_healthy "$svc"; then
