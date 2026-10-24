@@ -133,11 +133,22 @@ const SignupPage = () => {
   }, [enableRecaptcha]);
 
   const getInvitationQueryParams = () => {
-    const params = [`team=${urlParams.teamId}`, `teamMember=${urlParams.teamMemberId}`];
-    if (getProjectId()) {
-      params.push(`project=${getProjectId()}`);
+    // Build with URLSearchParams so values are encoded and the result never
+    // carries a leading '?' (callers add exactly one). The previous
+    // hand-rolled version returned a '?'-prefixed string that produced a
+    // '??'-prefixed OAuth URL, corrupting the first invitation parameter.
+    const params = new URLSearchParams();
+    if (urlParams.teamId) {
+      params.set('team', urlParams.teamId);
     }
-    return urlParams.teamId && urlParams.teamMemberId ? `?${params.join('&')}` : '';
+    if (urlParams.teamMemberId) {
+      params.set('teamMember', urlParams.teamMemberId);
+    }
+    const projectId = getProjectId();
+    if (projectId) {
+      params.set('project', projectId);
+    }
+    return params.toString();
   };
 
   const getRecaptchaToken = async () => {
@@ -179,6 +190,20 @@ const SignupPage = () => {
 
   const onFinish = async (values: IUserSignUpRequest) => {
     try {
+      // Invitation guard: the workspace invitation is bound to the recipient
+      // email (the backend rejects any other address with
+      // ERROR_INVALID_JOINING_EMAIL, and only after it has already created a
+      // standalone organization for the new account). Reject the mismatch here
+      // instead, before any account is created.
+      const invitedEmail = urlParams.email.toLowerCase().trim();
+      const enteredEmail = values.email.toLowerCase().trim();
+      if (invitedEmail && enteredEmail !== invitedEmail) {
+        message.error(
+          `This invitation was sent to ${urlParams.email}. Please sign up with that email address to join the invited workspace.`
+        );
+        return;
+      }
+
       setValidating(true);
 
       if (enableRecaptcha) {
@@ -268,8 +293,8 @@ const SignupPage = () => {
   const onGoogleSignUpClick = () => {
     try {
       trackMixpanelEvent(evt_signup_with_google_click);
-      const queryParams = getInvitationQueryParams();
-      const url = `${import.meta.env.VITE_API_URL}/secure/google${queryParams ? `?${queryParams}` : ''}`;
+      const queryString = getInvitationQueryParams();
+      const url = `${import.meta.env.VITE_API_URL}/secure/google${queryString ? `?${queryString}` : ''}`;
       window.location.href = url;
     } catch (error) {
       message.error('Failed to redirect to Google sign up');
@@ -279,8 +304,8 @@ const SignupPage = () => {
   const onAppleSignUpClick = () => {
     try {
       trackMixpanelEvent(evt_signup_with_apple_click);
-      const queryParams = getInvitationQueryParams();
-      const url = `${import.meta.env.VITE_API_URL}/secure/apple${queryParams ? `?${queryParams}` : ''}`;
+      const queryString = getInvitationQueryParams();
+      const url = `${import.meta.env.VITE_API_URL}/secure/apple${queryString ? `?${queryString}` : ''}`;
       window.location.href = url;
     } catch (error) {
       message.error('Failed to redirect to Apple sign up');
@@ -503,7 +528,11 @@ const SignupPage = () => {
 
       <Flex justify="center" gap={4} style={{ marginTop: 26, fontSize: 12.5 }}>
         <Typography.Text type="secondary">{t('alreadyHaveAccountText')}</Typography.Text>
-        <Link to="/auth/login" className="blue-link" style={{ fontWeight: 600 }}>
+        <Link
+          to={`/auth/login${window.location.search || ''}`}
+          className="blue-link"
+          style={{ fontWeight: 600 }}
+        >
           {t('loginButton')}
         </Link>
       </Flex>

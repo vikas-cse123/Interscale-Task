@@ -293,7 +293,7 @@ describe('SignupPage', () => {
     const googleButton = screen.getByText('Google');
     await user.click(googleButton);
 
-    expect(window.location.href).toBe('http://localhost:3000/secure/google?');
+    expect(window.location.href).toBe('http://localhost:3000/secure/google');
   });
 
   it('pre-fills form from URL parameters', () => {

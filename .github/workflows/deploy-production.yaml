@@ -75,6 +75,7 @@ jobs:
       client_portal: ${{ steps.detect.outputs.client_portal }}
       dry_run: ${{ steps.detect.outputs.dry_run }}
       short_sha: ${{ steps.detect.outputs.short_sha }}
+      matrix: ${{ steps.detect.outputs.matrix }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -115,6 +116,15 @@ jobs:
             echo "dry_run=$DRY_RUN"
             echo "short_sha=$(git rev-parse --short=8 '${{ github.sha }}')"
           } >> "$GITHUB_OUTPUT"
+          # Build matrix rows ONLY for changed services (stable tags must match
+          # the FRONTEND_IMAGE / BACKEND_IMAGE / CLIENT_PORTAL_IMAGE env above
+          # and production docker-compose.yml).
+          MATRIX_JSON='['; SEP=''
+          if [ "$FRONTEND" = "true" ]; then MATRIX_JSON="$MATRIX_JSON$SEP{\"service\":\"frontend\",\"context\":\"./worklenz-frontend\",\"image\":\"worklenz-frontend:3.2.0-clientportal\"}"; SEP=','; fi
+          if [ "$BACKEND" = "true" ]; then MATRIX_JSON="$MATRIX_JSON$SEP{\"service\":\"backend\",\"context\":\"./worklenz-backend\",\"image\":\"worklenz-backend:3.2.0-tzfix-digestfix1\"}"; SEP=','; fi
+          if [ "$PORTAL" = "true" ]; then MATRIX_JSON="$MATRIX_JSON$SEP{\"service\":\"client-portal\",\"context\":\"./worklenz-client-portal\",\"image\":\"worklenz-client-portal:3.2.0-local\"}"; SEP=','; fi
+          MATRIX_JSON="$MATRIX_JSON]"
+          echo "matrix=$MATRIX_JSON" >> "$GITHUB_OUTPUT"
           if [ "$FRONTEND" != "true" ] && [ "$BACKEND" != "true" ] && [ "$PORTAL" != "true" ]; then
             echo "### No deployable services changed" >> "$GITHUB_STEP_SUMMARY"
             echo "This push touches no frontend/backend/client-portal code (e.g. docs, nginx, or compose-only changes). Nothing will be deployed; infrastructure files always require a manual rollout." >> "$GITHUB_STEP_SUMMARY"
@@ -216,30 +226,18 @@ jobs:
     needs: [changes, gate-frontend, gate-backend, gate-client-portal]
     # Gate jobs are skipped when their service did not change; a skipped
     # dependency counts as success, so gates only block on real failures.
-    # Runs only for changed services (matrix legs for unchanged services skip).
+    # The matrix contains ONLY changed services (built by the changes job),
+    # so unchanged services are never built, tagged, or transferred.
     if: >-
-      (needs.changes.outputs.frontend == 'true' ||
-       needs.changes.outputs.backend == 'true' ||
-       needs.changes.outputs.client_portal == 'true') &&
-      matrix.changed == 'true'
+      needs.changes.outputs.frontend == 'true' ||
+      needs.changes.outputs.backend == 'true' ||
+      needs.changes.outputs.client_portal == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
       fail-fast: true
       matrix:
-        include:
-          - service: frontend
-            changed: ${{ needs.changes.outputs.frontend }}
-            context: ./worklenz-frontend
-            image: ${{ env.FRONTEND_IMAGE }}
-          - service: backend
-            changed: ${{ needs.changes.outputs.backend }}
-            context: ./worklenz-backend
-            image: ${{ env.BACKEND_IMAGE }}
-          - service: client-portal
-            changed: ${{ needs.changes.outputs.client_portal }}
-            context: ./worklenz-client-portal
-            image: ${{ env.CLIENT_PORTAL_IMAGE }}
+        include: ${{ fromJSON(needs.changes.outputs.matrix) }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -260,7 +258,7 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build image (tags: stable + main-<sha>)
+      - name: 'Build image (tags: stable + main-<sha>)'
         uses: docker/build-push-action@v5
         with:
           context: ${{ matrix.context }}

@@ -1,0 +1,133 @@
+name: Build Backend Image (no deploy)
+
+# Manual-only build of the backend image from the selected ref.
+# Produces a uniquely-tagged image tarball as a run artifact for inspection
+# or a later, separately approved deployment.
+#
+# This workflow NEVER touches production: no `environment`, no SSH secrets,
+# no scp, no `docker load` on EC2, no `docker compose`, no restarts, no
+# migrations. Use it to prove the backend builds from a verified commit and
+# that the image contains the expected code (e.g. Client Portal v2 routes)
+# before anyone approves a deployment (see deploy-production.yaml, which
+# rebuilds images itself at deploy time).
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read # checkout
+  actions: write # upload the image artifact
+
+concurrency:
+  group: backend-image-build
+  cancel-in-progress: true
+
+env:
+  BACKEND_IMAGE_REPO: worklenz-backend
+
+jobs:
+  build-backend-image:
+    name: Gate, build and verify backend image
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Compute image tag
+        id: tag
+        run: |
+          set -euo pipefail
+          SHORT_SHA="$(git rev-parse --short=8 '${{ github.sha }}')"
+          echo "tag=main-$SHORT_SHA" >> "$GITHUB_OUTPUT"
+          echo "Built from commit ${{ github.sha }} on ref ${{ github.ref }}"
+
+      - name: Guard against secret files in the build context
+        run: |
+          set -euo pipefail
+          # A stray .env in the checkout would be baked into the image by
+          # `COPY . .`. Production .env must only ever live on the EC2 host.
+          if [ -e worklenz-backend/.env ]; then
+            echo "::error::worklenz-backend/.env exists in the checkout - refusing to build (would bake secrets into the image)."
+            exit 1
+          fi
+          echo "No worklenz-backend/.env - safe to build."
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+          cache-dependency-path: ./worklenz-backend/package-lock.json
+
+      - name: Install backend dependencies
+        working-directory: ./worklenz-backend
+        run: npm ci
+
+      - name: TypeScript compile check (same gate as CI)
+        working-directory: ./worklenz-backend
+        run: npm run compile:prod
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build backend image (distinct tag only - never the production tag)
+        uses: docker/build-push-action@v5
+        with:
+          context: ./worklenz-backend
+          load: true
+          # Deliberately NOT the production stable tag (worklenz-backend:3.2.0-tzfix-digestfix1),
+          # so this artifact can never be mistaken for, or auto-picked-up as, the live image.
+          tags: ${{ env.BACKEND_IMAGE_REPO }}:${{ steps.tag.outputs.tag }}
+          build-args: |
+            RELEASE_VERSION=${{ github.sha }}
+
+      - name: Save image tarball + checksums
+        run: |
+          set -euo pipefail
+          IMG="${{ env.BACKEND_IMAGE_REPO }}:${{ steps.tag.outputs.tag }}"
+          docker save "$IMG" | gzip > "/tmp/${IMG//[:\/]/__}.tar.gz"
+          (cd /tmp && sha256sum "${IMG//[:\/]/__}.tar.gz" > SHA256SUMS-backend.txt)
+          ls -la /tmp/*.tar.gz /tmp/SHA256SUMS-backend.txt
+          echo "image_id=$(docker image inspect -f '{{.Id}}' "$IMG")" >> "$GITHUB_ENV"
+
+      - name: Verify v2 routes are baked into the image (zero code execution)
+        run: |
+          set -euo pipefail
+          IMG="${{ env.BACKEND_IMAGE_REPO }}:${{ steps.tag.outputs.tag }}"
+          # docker create + cp never STARTS the container: the app is not executed.
+          CID="$(docker create "$IMG")"
+          trap 'docker rm "$CID" >/dev/null' EXIT
+          docker cp "$CID:/app/build/routes/apis/client-portal-v2-admin-router.js" /tmp/v2-router-check.js
+          docker cp "$CID:/app/build/routes/apis/clients-api-router.js" /tmp/be-clients-router-check.js
+          docker cp "$CID:/app/release" /tmp/be-release
+          echo "--- v2 router content checks ---"
+          grep -c "overview/layout" /tmp/v2-router-check.js
+          grep -c "preview/users" /tmp/v2-router-check.js
+          grep -c "portal/v2" /tmp/be-clients-router-check.js
+          echo "--- release provenance ---"
+          cat /tmp/be-release
+          test "$(cat /tmp/be-release)" = "${{ github.sha }}"
+
+      - name: Upload image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-image-${{ steps.tag.outputs.tag }}
+          path: |
+            /tmp/*.tar.gz
+            /tmp/SHA256SUMS-backend.txt
+          retention-days: 7
+
+      - name: Summarize build
+        run: |
+          echo "### Backend image built (NOT deployed)" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Image tag: \`${{ env.BACKEND_IMAGE_REPO }}:${{ steps.tag.outputs.tag }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Image ID: \`${{ env.IMAGE_ID }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Source commit: \`${{ github.sha }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Artifact: \`backend-image-${{ steps.tag.outputs.tag }}\` (tarball + SHA256SUMS, 7-day retention)" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Verified: Client Portal v2 routes present in image; release file matches source commit." >> "$GITHUB_STEP_SUMMARY"
+          echo "- Production untouched: no SSH, no registry push, no container changes." >> "$GITHUB_STEP_SUMMARY"

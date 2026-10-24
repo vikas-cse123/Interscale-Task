@@ -409,7 +409,11 @@ const LoginPage: React.FC = () => {
 
       <Flex justify="center" gap={4} style={{ marginTop: 26, fontSize: 12.5 }}>
         <Typography.Text type="secondary">{t('dontHaveAccountText')}</Typography.Text>
-        <Link to="/auth/signup" className="blue-link" style={{ fontWeight: 600 }}>
+        <Link
+          to={`/auth/signup${window.location.search || ''}`}
+          className="blue-link"
+          style={{ fontWeight: 600 }}
+        >
           {t('signupButton')}
         </Link>
       </Flex>
