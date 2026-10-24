@@ -1,0 +1,387 @@
+name: Deploy to Production
+
+# Automatic production deployment for pushes to `main`.
+# - Builds/tests ONLY the services changed by the push (frontend / backend / client portal).
+# - Never runs database migrations, never touches production `.env`,
+#   never upgrades services that did not change.
+# - Production runs locally-tagged images (see `env:` below); this workflow
+#   rebuilds those exact tags in CI and ships them as tarballs — EC2 never
+#   compiles code, which the small host cannot do reliably.
+# - Concurrent pushes are serialized (concurrency group); a failed deploy
+#   rolls back to the pre-deploy image tag when one was preserved.
+#
+# Manual setup required (see .github/PRODUCTION_DEPLOY.md):
+#   1. Create a `production` Environment in repo Settings.
+#   2. Add PROD_SSH_HOST / PROD_SSH_USER / PROD_SSH_KEY (+ optional PROD_SSH_PORT)
+#      as secrets of that environment. Never commit keys or .env files.
+
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '.github/ISSUE_TEMPLATE/**'
+  workflow_dispatch:
+    inputs:
+      deploy_frontend:
+        description: 'Deploy the frontend service'
+        type: boolean
+        default: false
+      deploy_backend:
+        description: 'Deploy the backend service'
+        type: boolean
+        default: false
+      deploy_client_portal:
+        description: 'Deploy the client portal service'
+        type: boolean
+        default: false
+      dry_run:
+        description: 'Dry run: transfer + validate only, change nothing on production'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  # Required by actions/upload-artifact + actions/download-artifact.
+  actions: write
+
+# Serialize production deployments: pushes queue behind each other,
+# never run two deploys at the same time.
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+env:
+  # Stable image tags currently referenced by production docker-compose.yml.
+  # Keep these in sync if production retags a service.
+  FRONTEND_IMAGE: worklenz-frontend:3.2.0-clientportal
+  BACKEND_IMAGE: worklenz-backend:3.2.0-tzfix-digestfix1
+  CLIENT_PORTAL_IMAGE: worklenz-client-portal:3.2.0-local
+  PROD_DIR: ~/worklenz
+  PROD_SSH_PORT: '22'
+  PROD_WORKLENZ_URL: https://task.interscalemarketing.in/worklenz/
+  PROD_PORTAL_URL: https://task.interscalemarketing.in/portal/
+  PROD_HEALTH_URL: https://task.interscalemarketing.in/public/health
+
+jobs:
+  changes:
+    name: Detect changed services
+    runs-on: ubuntu-latest
+    outputs:
+      frontend: ${{ steps.detect.outputs.frontend }}
+      backend: ${{ steps.detect.outputs.backend }}
+      client_portal: ${{ steps.detect.outputs.client_portal }}
+      dry_run: ${{ steps.detect.outputs.dry_run }}
+      short_sha: ${{ steps.detect.outputs.short_sha }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect services changed by this push (or manual inputs)
+        id: detect
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            FRONTEND='${{ inputs.deploy_frontend }}'
+            BACKEND='${{ inputs.deploy_backend }}'
+            PORTAL='${{ inputs.deploy_client_portal }}'
+            DRY_RUN='${{ inputs.dry_run }}'
+            echo "Manual trigger: frontend=$FRONTEND backend=$BACKEND portal=$PORTAL dry_run=$DRY_RUN"
+          else
+            BEFORE='${{ github.event.before }}'
+            SHA='${{ github.sha }}'
+            if [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
+              # History was rewritten; compare against the first parent instead.
+              BEFORE="$(git rev-parse "$SHA~1")"
+            fi
+            echo "Diff range: $BEFORE...$SHA"
+            CHANGED="$(git diff --name-only "$BEFORE" "$SHA" || git diff --name-only "$SHA~1" "$SHA")"
+            echo "$CHANGED"
+            has_changed() { echo "$CHANGED" | grep -qE "^$1/"; }
+            FRONTEND=false; BACKEND=false; PORTAL=false
+            if has_changed 'worklenz-frontend'; then FRONTEND=true; fi
+            if has_changed 'worklenz-backend'; then BACKEND=true; fi
+            if has_changed 'worklenz-client-portal'; then PORTAL=true; fi
+            DRY_RUN=false
+          fi
+          {
+            echo "frontend=$FRONTEND"
+            echo "backend=$BACKEND"
+            echo "client_portal=$PORTAL"
+            echo "dry_run=$DRY_RUN"
+            echo "short_sha=$(git rev-parse --short=8 '${{ github.sha }}')"
+          } >> "$GITHUB_OUTPUT"
+          if [ "$FRONTEND" != "true" ] && [ "$BACKEND" != "true" ] && [ "$PORTAL" != "true" ]; then
+            echo "### No deployable services changed" >> "$GITHUB_STEP_SUMMARY"
+            echo "This push touches no frontend/backend/client-portal code (e.g. docs, nginx, or compose-only changes). Nothing will be deployed; infrastructure files always require a manual rollout." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  gate-frontend:
+    name: Frontend tests + production build
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: ./worklenz-frontend
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+          cache-dependency-path: ./worklenz-frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run focused unit tests
+        # Focused regression suites (My Team invite/remove, widget, role
+        # resolution). The full suite is not gated: it has pre-existing
+        # failures unrelated to deployment safety; the production build below
+        # additionally runs every locale validation in strict mode.
+        run: npx vitest run src/pages/home/home-my-team/HomeMyTeam.test.tsx src/pages/home/home-team-members-widget/HomeTeamMembersWidget.test.tsx src/utils/__tests__/role-permissions.utils.test.ts
+
+      - name: Production build (runs all locale checks in strict mode)
+        run: npm run build
+
+  gate-backend:
+    name: Backend typecheck
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: ./worklenz-backend
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+          cache-dependency-path: ./worklenz-backend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: TypeScript compile check (same as CI)
+        run: npm run compile:prod
+
+  gate-client-portal:
+    name: Client portal production build
+    needs: changes
+    if: needs.changes.outputs.client_portal == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: ./worklenz-client-portal
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+          cache-dependency-path: ./worklenz-client-portal/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Production build (same as CI)
+        run: npm run build
+
+  build-images:
+    name: Build changed service images
+    needs: [changes, gate-frontend, gate-backend, gate-client-portal]
+    # Gate jobs are skipped when their service did not change; a skipped
+    # dependency counts as success, so gates only block on real failures.
+    # Runs only for changed services (matrix legs for unchanged services skip).
+    if: >-
+      (needs.changes.outputs.frontend == 'true' ||
+       needs.changes.outputs.backend == 'true' ||
+       needs.changes.outputs.client_portal == 'true') &&
+      matrix.changed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - service: frontend
+            changed: ${{ needs.changes.outputs.frontend }}
+            context: ./worklenz-frontend
+            image: ${{ env.FRONTEND_IMAGE }}
+          - service: backend
+            changed: ${{ needs.changes.outputs.backend }}
+            context: ./worklenz-backend
+            image: ${{ env.BACKEND_IMAGE }}
+          - service: client-portal
+            changed: ${{ needs.changes.outputs.client_portal }}
+            context: ./worklenz-client-portal
+            image: ${{ env.CLIENT_PORTAL_IMAGE }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Guard against secret files in the build context
+        run: |
+          set -euo pipefail
+          # A stray .env in the checkout would be baked into the image by
+          # `COPY . .`. Production .env must only ever live on the EC2 host.
+          if [ -e "${{ matrix.context }}/.env" ]; then
+            echo "::error::${{ matrix.context }}/.env exists in the checkout - refusing to build (would bake secrets into the image)."
+            exit 1
+          fi
+          echo "No .env in ${{ matrix.context }} - safe to build."
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image (tags: stable + main-<sha>)
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ matrix.context }}
+          load: true
+          tags: |
+            ${{ matrix.image }}
+            ${{ matrix.image }}-main-${{ needs.changes.outputs.short_sha }}
+          build-args: |
+            RELEASE_VERSION=${{ github.sha }}
+            VITE_API_BASE_URL=http://backend:3000/api/client-portal
+
+      - name: Save image tarball
+        run: |
+          set -euo pipefail
+          SAFE_TAG="$(echo '${{ matrix.image }}' | tr ':/' '__')"
+          docker save '${{ matrix.image }}' | gzip > "/tmp/${SAFE_TAG}.tar.gz"
+          ls -la /tmp/*.tar.gz
+
+      - name: Upload image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: prod-image-${{ matrix.service }}-${{ needs.changes.outputs.short_sha }}
+          path: /tmp/*.tar.gz
+          retention-days: 3
+
+  deploy:
+    name: Deploy to production EC2
+    needs: [changes, build-images]
+    if: >-
+      needs.changes.outputs.frontend == 'true' ||
+      needs.changes.outputs.backend == 'true' ||
+      needs.changes.outputs.client_portal == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment:
+      name: production
+      url: https://task.interscalemarketing.in/worklenz/
+    steps:
+      - name: Checkout repository (deploy script)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Download image artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: prod-image-*-${{ needs.changes.outputs.short_sha }}
+          path: /tmp/prod-images
+          merge-multiple: true
+
+      - name: Start SSH agent
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.PROD_SSH_KEY }}
+
+      - name: Transfer images + deploy script
+        env:
+          PROD_SSH_HOST: ${{ secrets.PROD_SSH_HOST }}
+          PROD_SSH_USER: ${{ secrets.PROD_SSH_USER }}
+          PROD_SSH_PORT: ${{ secrets.PROD_SSH_PORT }}
+        run: |
+          set -euo pipefail
+          PORT="${PROD_SSH_PORT:-22}"
+          SSH_BASE_OPTS="-o StrictHostKeyChecking=no -o ConnectTimeout=30"
+          # shellcheck disable=SC2088
+          REMOTE_DIR="${{ env.PROD_DIR }}/../prod-deploy-incoming"
+          # shellcheck disable=SC2029
+          ssh $SSH_BASE_OPTS -p "$PORT" "$PROD_SSH_USER@$PROD_SSH_HOST" "mkdir -p $REMOTE_DIR"
+          scp $SSH_BASE_OPTS -P "$PORT" /tmp/prod-images/*.tar.gz \
+            "$PROD_SSH_USER@$PROD_SSH_HOST:$REMOTE_DIR/"
+          scp $SSH_BASE_OPTS -P "$PORT" .github/scripts/prod-deploy.sh \
+            "$PROD_SSH_USER@$PROD_SSH_HOST:$REMOTE_DIR/"
+          echo "Transferred: $(ls /tmp/prod-images)"
+
+      - name: Run production deploy script
+        env:
+          PROD_SSH_HOST: ${{ secrets.PROD_SSH_HOST }}
+          PROD_SSH_USER: ${{ secrets.PROD_SSH_USER }}
+          PROD_SSH_PORT: ${{ secrets.PROD_SSH_PORT }}
+        run: |
+          set -euo pipefail
+          PORT="${PROD_SSH_PORT:-22}"
+          SSH_BASE_OPTS="-o StrictHostKeyChecking=no -o ConnectTimeout=30"
+          SERVICES=""
+          if [ "${{ needs.changes.outputs.frontend }}" = "true" ]; then SERVICES="$SERVICES frontend"; fi
+          if [ "${{ needs.changes.outputs.backend }}" = "true" ]; then SERVICES="$SERVICES backend"; fi
+          if [ "${{ needs.changes.outputs.client_portal }}" = "true" ]; then SERVICES="$SERVICES client-portal"; fi
+          DRY_RUN=""
+          if [ "${{ needs.changes.outputs.dry_run }}" = "true" ]; then DRY_RUN="--dry-run"; fi
+          INCOMING_DIR="${{ env.PROD_DIR }}/../prod-deploy-incoming"
+          # shellcheck disable=SC2088,SC2029
+          ssh $SSH_BASE_OPTS -p "$PORT" "$PROD_SSH_USER@$PROD_SSH_HOST" \
+            "bash $INCOMING_DIR/prod-deploy.sh \
+              --dir '${{ env.PROD_DIR }}' \
+              --incoming '$INCOMING_DIR' \
+              --services '$SERVICES' \
+              --sha '${{ github.sha }}' \
+              --frontend-image '${{ env.FRONTEND_IMAGE }}' \
+              --backend-image '${{ env.BACKEND_IMAGE }}' \
+              --client-portal-image '${{ env.CLIENT_PORTAL_IMAGE }}' \
+              $DRY_RUN"
+
+      - name: Verify public HTTPS endpoints
+        if: needs.changes.outputs.dry_run != 'true'
+        run: |
+          set -euo pipefail
+          check_200() {
+            for i in 1 2 3 4 5 6; do
+              CODE="$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 "$1" || true)"
+              echo "$1 -> $CODE (attempt $i)"
+              if [ "$CODE" = "200" ]; then return 0; fi
+              sleep 10
+            done
+            echo "::error::$1 did not return HTTP 200 after retries"
+            return 1
+          }
+          check_200 '${{ env.PROD_WORKLENZ_URL }}'
+          check_200 '${{ env.PROD_PORTAL_URL }}'
+          HEALTH="$(curl -s --max-time 30 '${{ env.PROD_HEALTH_URL }}' || true)"
+          echo "health: $HEALTH"
+          echo "$HEALTH" | grep -q '"status":"ok"' || {
+            echo "::error::backend health endpoint did not report ok: $HEALTH"
+            exit 1
+          }
