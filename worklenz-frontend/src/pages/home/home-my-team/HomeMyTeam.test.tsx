@@ -93,8 +93,37 @@ describe('HomeMyTeam invite', () => {
     expect(store.getState().memberReducer.isInviteMemberDrawerOpen).toBe(true);
   });
 
+  it('shows Invite Member to Admin and dispatches the drawer toggle', async () => {
+    session.current = { role_name: 'Admin', owner: false, team_member_id: 'm-admin' };
+    const user = userEvent.setup();
+    const { store } = renderPage();
+    const buttons = await screen.findAllByRole('button', { name: 'Invite Member' });
+    expect(buttons.length).toBeGreaterThan(0);
+    await user.click(buttons[0]);
+    expect(store.getState().memberReducer.isInviteMemberDrawerOpen).toBe(true);
+  });
+
+  it('shows Invite Member when the session carries the backend is_admin flag without a role name', async () => {
+    // Regression: getSessionRoleName used to ignore is_admin, hiding Invite for
+    // users the backend authorizes (backend getEffectiveTeamRole falls back to it).
+    session.current = { owner: false, is_admin: true, team_member_id: 'm-admin' };
+    const user = userEvent.setup();
+    const { store } = renderPage();
+    const buttons = await screen.findAllByRole('button', { name: 'Invite Member' });
+    expect(buttons.length).toBeGreaterThan(0);
+    await user.click(buttons[0]);
+    expect(store.getState().memberReducer.isInviteMemberDrawerOpen).toBe(true);
+  });
+
   it('hides Invite Member from non-privileged roles', async () => {
     session.current = { role_name: 'Member', team_member_id: 'm-member' };
+    renderPage();
+    await screen.findByText('Manny Member');
+    expect(screen.queryByRole('button', { name: 'Invite Member' })).toBeNull();
+  });
+
+  it('hides Invite Member from Team Leads', async () => {
+    session.current = { role_name: 'Team Lead', owner: false, team_member_id: 'm-lead' };
     renderPage();
     await screen.findByText('Manny Member');
     expect(screen.queryByRole('button', { name: 'Invite Member' })).toBeNull();

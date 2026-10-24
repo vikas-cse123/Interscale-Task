@@ -40,6 +40,27 @@ describe('role-permissions.utils', () => {
       );
       expect(getSessionRoleName(null)).toBe(ROLE_NAMES.MEMBER);
     });
+
+    it('treats the is_admin flag as Admin when no role name is present (mirrors backend getEffectiveTeamRole)', () => {
+      expect(getSessionRoleName({ owner: false, is_admin: true } as any)).toBe(
+        ROLE_NAMES.ADMIN
+      );
+      expect(
+        getSessionRoleName({ role_name: '', owner: false, is_admin: true } as any)
+      ).toBe(ROLE_NAMES.ADMIN);
+      expect(
+        getSessionRoleName({ role_name: undefined, owner: false, is_admin: false } as any)
+      ).toBe(ROLE_NAMES.MEMBER);
+    });
+
+    it('prefers an explicit role name over the is_admin flag (mirrors backend)', () => {
+      expect(
+        getSessionRoleName({ role_name: 'Team Lead', owner: false, is_admin: true } as any)
+      ).toBe(ROLE_NAMES.TEAM_LEAD);
+      expect(
+        getSessionRoleName({ role_name: 'Member', owner: false, is_admin: true } as any)
+      ).toBe(ROLE_NAMES.MEMBER);
+    });
   });
 
   describe('canManageUserRole', () => {

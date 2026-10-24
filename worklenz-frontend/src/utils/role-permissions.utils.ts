@@ -27,7 +27,22 @@ export const normalizeRoleName = (roleName?: string, isOwner?: boolean): RoleNam
 };
 
 export const getSessionRoleName = (session: ILocalSession | null): RoleName => {
-  return normalizeRoleName(session?.role_name, session?.owner);
+  // Mirrors backend getEffectiveTeamRole (shared/team-permissions.ts) exactly:
+  // team-owner flag first, then the resolved role name, then the is_admin flag
+  // (the DB is_admin() check has no "active membership" filter, so a session
+  // can legitimately carry is_admin=true with an empty role_name), else Member.
+  // Keeping both sides identical prevents the UI from hiding Owner/Admin-only
+  // actions (e.g. My Team "Invite Member") for users the API authorizes.
+  if (session?.owner) {
+    return ROLE_NAMES.OWNER;
+  }
+  if (session?.role_name?.trim()) {
+    return normalizeRoleName(session.role_name);
+  }
+  if (session?.is_admin) {
+    return ROLE_NAMES.ADMIN;
+  }
+  return ROLE_NAMES.MEMBER;
 };
 
 /**
