@@ -92,7 +92,7 @@ const HomeMyTeam: React.FC = () => {
         message.error(res.message || 'Unable to update member status.');
       }
     } catch {
-      message.error(t('myTeam.statusToggleError', { defaultValue: 'Unable to update member status.' }));
+      message.error(t('myTeam.updateStatusError', { defaultValue: 'Unable to update member status.' }));
     } finally {
       setLoading(false);
     }
@@ -110,12 +110,12 @@ const HomeMyTeam: React.FC = () => {
         message.error(res.message);
       } else {
         message.error(
-          t('myTeam.deleteError', { defaultValue: 'Failed to remove the team member.' })
+          t('myTeam.deleteError', { defaultValue: 'Unable to remove member.' })
         );
       }
     } catch {
       message.error(
-        t('myTeam.deleteError', { defaultValue: 'Failed to remove the team member.' })
+        t('myTeam.deleteError', { defaultValue: 'Unable to remove member.' })
       );
     } finally {
       setLoading(false);
