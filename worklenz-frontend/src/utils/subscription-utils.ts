@@ -103,6 +103,13 @@ export const canUseFeature = (
   legacy?: (session: ILocalSession) => boolean
 ): boolean => {
   if (!session) return false;
+  // This grant comes from the backend's deployment mode, not the stored billing tier.
+  if (
+    session.business_features_enabled === true ||
+    session.subscription_type === ISUBSCRIPTION_TYPE.SELF_HOSTED
+  ) {
+    return true;
+  }
   const entitlements = session.entitlements;
   if (entitlements && (entitlements.enforced || ALWAYS_ENFORCED_FEATURES.has(feature))) {
     return entitlements.features.includes(feature);
@@ -186,6 +193,7 @@ export const isEnterprisePlan = (session: ILocalSession | null): boolean => {
  */
 export const isFreeUser = (session: ILocalSession | null): boolean => {
   if (!session) return true;
+  if (session.business_features_enabled === true) return false;
   return session.subscription_type === ISUBSCRIPTION_TYPE.FREE;
 };
 
@@ -194,6 +202,7 @@ export const isFreeUser = (session: ILocalSession | null): boolean => {
  */
 export const isExpiredTrialSession = (session: ILocalSession | null): boolean => {
   if (!session) return false;
+  if (session.business_features_enabled === true) return false;
   if (
     session.subscription_type === ISUBSCRIPTION_TYPE.FREE ||
     session.subscription_status?.toLowerCase() === 'free'
@@ -363,7 +372,8 @@ export const shouldShowAppSumoPromo = (
 ): boolean => {
   if (!isAppSumoUser(session, billingInfo)) return false;
 
-  const redeemedCodesCount = billingInfo?.redeemed_codes_count ?? session?.redeemed_codes_count ?? 0;
+  const redeemedCodesCount =
+    billingInfo?.redeemed_codes_count ?? session?.redeemed_codes_count ?? 0;
   const planName = billingInfo?.plan_name ?? session?.plan_name;
 
   return redeemedCodesCount < APPSUMO_BUSINESS_UNLOCK_CODE_COUNT && planName !== 'Business Plan';
@@ -385,7 +395,10 @@ export const shouldRestrictBillableFeature = (session: ILocalSession | null): bo
  */
 export const hasReachedSeatLimit = (
   session: ILocalSession | null,
-  billing: { total_used?: number | null; total_seats?: number | null; billing_provider?: string | null } | null | undefined
+  billing:
+    | { total_used?: number | null; total_seats?: number | null; billing_provider?: string | null }
+    | null
+    | undefined
 ): boolean => {
   const seats = billing?.total_seats ?? 0;
   if (!(seats > 0)) return false;

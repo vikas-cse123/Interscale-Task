@@ -1,10 +1,45 @@
 import { describe, expect, it } from 'vitest';
-import { canUseFeature, hasReachedSeatLimit } from './subscription-utils';
+import {
+  canUseFeature,
+  hasReachedSeatLimit,
+  isFreeUser,
+  isExpiredTrialSession,
+} from './subscription-utils';
 import type { ILocalSession } from '@/types/auth/local-session.types';
 
 const session = (overrides: Partial<ILocalSession>) => overrides as ILocalSession;
 
 describe('canUseFeature', () => {
+  it('honors the server self-hosted grant over stale billing and entitlement fields', () => {
+    const selfHosted = session({
+      subscription_type: 'FREE',
+      business_features_enabled: true,
+      entitlements: {
+        tier: 'free',
+        features: [],
+        guest_limit: 0,
+        seat_limit: 1,
+        primary_source: 'free',
+        enforced: true,
+      },
+    });
+    for (const feature of [
+      'finance_module',
+      'planner_workload',
+      'planner_timeline',
+      'planner_schedule',
+      'task_export',
+      'project_phases',
+    ]) {
+      expect(canUseFeature(selfHosted, feature)).toBe(true);
+    }
+    expect(isFreeUser(selfHosted)).toBe(false);
+    expect(
+      isExpiredTrialSession(
+        session({ subscription_type: 'TRIAL', is_expired: true, business_features_enabled: true })
+      )
+    ).toBe(false);
+  });
   it('denies without a session', () => {
     expect(canUseFeature(null, 'client_portal')).toBe(false);
   });
@@ -111,7 +146,11 @@ describe('hasReachedSeatLimit', () => {
 
   it('blocks per-user Business plans too: the purchased seats are the cap', () => {
     expect(
-      hasReachedSeatLimit(business, { total_used: 5, total_seats: 5, billing_provider: 'paddle_billing' })
+      hasReachedSeatLimit(business, {
+        total_used: 5,
+        total_seats: 5,
+        billing_provider: 'paddle_billing',
+      })
     ).toBe(true);
   });
 });

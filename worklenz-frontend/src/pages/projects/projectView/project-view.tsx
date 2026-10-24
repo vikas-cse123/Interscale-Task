@@ -1,3 +1,4 @@
+import { resolveProjectViewNavigation } from '@/lib/project/project-view-navigation';
 import React, { useEffect, useState, useMemo, useCallback, Suspense, useRef } from 'react';
 import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { createPortal } from 'react-dom';
@@ -27,7 +28,12 @@ import { SocketEvents } from '@/shared/socket-events';
 import { toggleUpgradeModal } from '@/features/admin-center/admin-center.slice';
 import { hasBusinessFeatureAccess } from '@/utils/subscription-utils';
 import { hasFinanceViewPermission } from '@/utils/finance-permissions';
-import { getProject, setProjectId, setProjectView, clearProjectAccessForId } from '@/features/project/project.slice';
+import {
+  getProject,
+  setProjectId,
+  setProjectView,
+  clearProjectAccessForId,
+} from '@/features/project/project.slice';
 import {
   fetchStatuses,
   fetchStatusesCategories,
@@ -42,9 +48,21 @@ import { CreateIssueModal } from '@/components/projects/create-issue/create-issu
 import { resetSoftwareQuickFilters } from '@/features/projects/singleProject/quick-filters/software-quick-filters.slice';
 import { resetReleases } from '@/features/projects/singleProject/releases/releases.slice';
 import './project-view.css';
-import { resetTaskListData, restoreFilters, setTaskListProjectId, fetchTaskAssignees, fetchLabelsByProject, startFilterRestoration, endFilterRestoration, restoreStatusFilters } from '@/features/tasks/tasks.slice';
+import {
+  resetTaskListData,
+  restoreFilters,
+  setTaskListProjectId,
+  fetchTaskAssignees,
+  fetchLabelsByProject,
+  startFilterRestoration,
+  endFilterRestoration,
+  restoreStatusFilters,
+} from '@/features/tasks/tasks.slice';
 import { resetBoardData } from '@/features/board/board-slice';
-import { resetTaskManagement, fetchTasksV3 } from '@/features/task-management/task-management.slice';
+import {
+  resetTaskManagement,
+  fetchTasksV3,
+} from '@/features/task-management/task-management.slice';
 import { store } from '@/app/store';
 import {
   resetGrouping,
@@ -69,7 +87,11 @@ import {
   setTargetDrawerTab,
   TaskDrawerTabKey,
 } from '@/features/task-drawer/task-drawer.slice';
-import { resetState as resetEnhancedKanbanState, initKanbanGroupingFromServer, IGroupBy } from '@/features/enhanced-kanban/enhanced-kanban.slice';
+import {
+  resetState as resetEnhancedKanbanState,
+  initKanbanGroupingFromServer,
+  IGroupBy,
+} from '@/features/enhanced-kanban/enhanced-kanban.slice';
 import { setProjectId as setInsightsProjectId } from '@/features/projects/insights/project-insights.slice';
 import { SuspenseFallback } from '@/components/suspense-fallback/suspense-fallback';
 import ProjectViewSkeleton from './project-view-skeleton';
@@ -193,13 +215,9 @@ const ProjectView = React.memo(() => {
   useEffect(() => {
     if (!socket || !projectId) return;
 
-    const notify = (descKey: string) => () =>
-      alertService.info(t('projectUpdated'), t(descKey));
+    const notify = (descKey: string) => () => alertService.info(t('projectUpdated'), t(descKey));
 
-    const handlePermissionChanged = (payload?: {
-      project_id?: string;
-      reason?: string;
-    }) => {
+    const handlePermissionChanged = (payload?: { project_id?: string; reason?: string }) => {
       if (payload?.project_id && payload.project_id !== projectId) return;
 
       dispatch(clearProjectAccessForId(projectId));
@@ -207,8 +225,7 @@ const ProjectView = React.memo(() => {
 
       message.warning(
         t('permissionLostDesc', {
-          defaultValue:
-            'Your permissions on this project were updated. Reloading your view.',
+          defaultValue: 'Your permissions on this project were updated. Reloading your view.',
         })
       );
     };
@@ -229,41 +246,27 @@ const ProjectView = React.memo(() => {
     };
   }, [socket, projectId, t, dispatch]);
 
+  const upgradeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   // Update local state when URL params change
   useEffect(() => {
     // Validate that the tab from URL is not disabled before setting it
     const filteredTabItems = getFilteredTabItems(currentSession, selectedProject, canCreateTask);
-    const requestedTab = filteredTabItems.find(item => item.key === urlParams.tab);
-
-    // `canCreateTask` defaults to `true` until the project data loads, then may flip to
-    // `false` and drop permission-gated tabs (e.g. roadmap). Wait for the project to be
-    // loaded before redirecting away from an unavailable tab — otherwise the requested
-    // tab renders briefly and then jumps, producing a visible URL/tab flash on load.
-    const projectReady = !!selectedProject;
-
-    if (projectReady && !requestedTab) {
-      // Tab isn't available to this user at all — fall back to the first available tab.
-      const firstAvailableTab = filteredTabItems.find(item => !item.disabled);
-      if (firstAvailableTab) {
-        setActiveTab(firstAvailableTab.key);
-        if (searchParams.get('tab') && searchParams.get('tab') !== firstAvailableTab.key) {
-          const nextParams = new URLSearchParams(searchParams);
-          nextParams.set('tab', firstAvailableTab.key);
-          navigate({ pathname: location.pathname, search: nextParams.toString() }, { replace: true });
-        }
-      }
-    } else if (requestedTab?.disabled) {
-      // If tab is disabled, redirect to first available tab and show upgrade modal
-      const firstAvailableTab = filteredTabItems.find(item => !item.disabled);
-      if (firstAvailableTab) {
-        setActiveTab(firstAvailableTab.key);
-        // Show upgrade modal after a brief delay to ensure component is mounted
-        setTimeout(() => {
-          dispatch(toggleUpgradeModal());
-        }, 100);
-      }
-    } else {
-      setActiveTab(urlParams.tab);
+    const navigation = resolveProjectViewNavigation(
+      urlParams.tab,
+      filteredTabItems,
+      selectedProject?.id === projectId
+    );
+    setActiveTab(navigation.tabKey);
+    if (navigation.redirect && searchParams.get('tab')) {
+      const nextParams = new URLSearchParams(searchParams);
+      nextParams.set('tab', navigation.tabKey);
+      navigate({ pathname: location.pathname, search: nextParams.toString() }, { replace: true });
+    }
+    if (navigation.upgrade) {
+      const timeout = setTimeout(() => dispatch(toggleUpgradeModal()), 100);
+      // The timer is cleared below if access or the requested URL changes.
+      upgradeTimeoutRef.current = timeout;
     }
 
     // Only initialise pinnedTab from the URL once — after that pinToDefaultTab
@@ -276,7 +279,20 @@ const ProjectView = React.memo(() => {
     }
 
     setTaskId(urlParams.taskId);
-  }, [urlParams, currentSession, selectedProject, dispatch, searchParams, navigate, location.pathname]);
+    return () => {
+      if (upgradeTimeoutRef.current) clearTimeout(upgradeTimeoutRef.current);
+    };
+  }, [
+    urlParams,
+    currentSession,
+    selectedProject,
+    projectId,
+    canCreateTask,
+    dispatch,
+    searchParams,
+    navigate,
+    location.pathname,
+  ]);
 
   // Remove translation preloading since we're using simple load-as-you-go approach
   useEffect(() => {
@@ -368,8 +384,7 @@ const ProjectView = React.memo(() => {
           dispatch(setProjectContext(projectId));
 
           const requestedTab = searchParams.get('tab') || 'tasks-list';
-          const shouldPreloadTaskList =
-            requestedTab === 'tasks-list' || requestedTab === 'backlog';
+          const shouldPreloadTaskList = requestedTab === 'tasks-list' || requestedTab === 'backlog';
 
           // Block filter persistence until the new project's saved filters are restored,
           // otherwise useFilterPersistence can write the previous project's filters under
@@ -457,7 +472,9 @@ const ProjectView = React.memo(() => {
               : 'status';
 
             dispatch(initGroupingFromServer({ grouping: taskListGroupBy, projectId }));
-            dispatch(initKanbanGroupingFromServer({ groupBy: boardGroupBy as IGroupBy, projectId }));
+            dispatch(
+              initKanbanGroupingFromServer({ groupBy: boardGroupBy as IGroupBy, projectId })
+            );
 
             if (shouldPreloadTaskList) {
               // Statuses, members and labels are loaded above, so saved filter IDs can be
@@ -516,11 +533,7 @@ const ProjectView = React.memo(() => {
       // Apply drawer tab deep-link when the task id changes (e.g. drawer_tab=timeLog).
       // Do not depend on searchParams broadly — that would re-force the tab on unrelated URL updates.
       const drawerTab = searchParams.get('drawer_tab');
-      if (
-        drawerTab === 'info' ||
-        drawerTab === 'timeLog' ||
-        drawerTab === 'activityLog'
-      ) {
+      if (drawerTab === 'info' || drawerTab === 'timeLog' || drawerTab === 'activityLog') {
         dispatch(setTargetDrawerTab(drawerTab as TaskDrawerTabKey));
       }
     }
@@ -716,48 +729,48 @@ const ProjectView = React.memo(() => {
               )}
               {((item.key === 'tasks-list' && !isSoftwareProject) || item.key === 'board') &&
                 !item.disabled && (
-                <ConfigProvider wave={{ disabled: true }}>
-                  <Button
-                    className="borderless-icon-btn"
-                    size="small"
-                    type="text"
-                    style={{
-                      backgroundColor: 'transparent',
-                      border: 'none',
-                      boxShadow: 'none',
-                      padding: '2px',
-                      minWidth: 'auto',
-                      height: 'auto',
-                      lineHeight: 1,
-                    }}
-                    icon={
-                      item.key === pinnedTab ? (
-                        <PushpinFilled
-                          style={{
-                            fontSize: '12px',
-                            color: 'currentColor',
-                            transform: 'rotate(-45deg)',
-                            transition: 'all 0.3s ease',
-                          }}
-                        />
-                      ) : (
-                        <PushpinOutlined
-                          style={{
-                            fontSize: '12px',
-                            color: 'currentColor',
-                            transition: 'all 0.3s ease',
-                          }}
-                        />
-                      )
-                    }
-                    onClick={e => {
-                      e.stopPropagation();
-                      pinToDefaultTab(item.key);
-                    }}
-                    title={item.key === pinnedTab ? t('unpinTab') : t('pinTab')}
-                  />
-                </ConfigProvider>
-              )}
+                  <ConfigProvider wave={{ disabled: true }}>
+                    <Button
+                      className="borderless-icon-btn"
+                      size="small"
+                      type="text"
+                      style={{
+                        backgroundColor: 'transparent',
+                        border: 'none',
+                        boxShadow: 'none',
+                        padding: '2px',
+                        minWidth: 'auto',
+                        height: 'auto',
+                        lineHeight: 1,
+                      }}
+                      icon={
+                        item.key === pinnedTab ? (
+                          <PushpinFilled
+                            style={{
+                              fontSize: '12px',
+                              color: 'currentColor',
+                              transform: 'rotate(-45deg)',
+                              transition: 'all 0.3s ease',
+                            }}
+                          />
+                        ) : (
+                          <PushpinOutlined
+                            style={{
+                              fontSize: '12px',
+                              color: 'currentColor',
+                              transition: 'all 0.3s ease',
+                            }}
+                          />
+                        )
+                      }
+                      onClick={e => {
+                        e.stopPropagation();
+                        pinToDefaultTab(item.key);
+                      }}
+                      title={item.key === pinnedTab ? t('unpinTab') : t('pinTab')}
+                    />
+                  </ConfigProvider>
+                )}
             </Flex>
           </Tooltip>
         ),
@@ -944,9 +957,7 @@ const ProjectView = React.memo(() => {
       <ProjectViewHeader />
 
       {/* One-time setup banner for newly created projects */}
-      {isNewProject && projectId && (
-        <ProjectSetupBanner projectId={projectId} />
-      )}
+      {isNewProject && projectId && <ProjectSetupBanner projectId={projectId} />}
 
       {projectId && isSoftwareProjectType(selectedProject?.project_type) && (
         <>

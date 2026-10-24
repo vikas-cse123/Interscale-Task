@@ -17,6 +17,8 @@ import {
   getFreePlanSettings,
 } from "../../shared/paddle-utils";
 import { hasBusinessPlanAccess } from "../../middlewares/subscription-middleware";
+import { isSelfHostedDeployment } from "../../shared/deployment-mode";
+import { ensureDefaultSoftwareSprint } from "../../shared/software-project-defaults";
 import OnboardingController from "../onboarding-controller";
 import { IProjectTemplateSettingsOverrides, IProjectTemplateApplySkip } from "./interfaces";
 import { allocateCopyName } from "../../shared/template-copy-name";
@@ -283,7 +285,7 @@ export default class ProjectTemplatesController extends ProjectTemplatesControll
     req: IWorkLenzRequest,
     res: IWorkLenzResponse
   ): Promise<IWorkLenzResponse> {
-    if (req.user?.subscription_status === "free" && req.user?.owner_id) {
+    if (!isSelfHostedDeployment() && req.user?.subscription_status === "free" && req.user?.owner_id) {
       const limits = await getFreePlanSettings();
       const projectsCount = await getCurrentProjectsCount(req.user.owner_id);
       const projectsLimit = parseInt(limits.projects_limit);
@@ -326,6 +328,7 @@ export default class ProjectTemplatesController extends ProjectTemplatesControll
 
       // Create a clean project object with only the fields needed for create_project
       const projectData: any = {
+        project_type: req.body.project_type === "software" ? "software" : "general",
         name: safeProjectName || data.name,
         notes: data.description ? data.description.substring(0, 500) : null, // truncate to DB limit of 500 chars
         phase_label: data.phase_label,
@@ -348,6 +351,7 @@ export default class ProjectTemplatesController extends ProjectTemplatesControll
 
       await this.insertTeamLabels(labels, req.user?.team_id);
       await this.insertProjectPhases(phases, project_id as string);
+      if (projectData.project_type === "software") await ensureDefaultSoftwareSprint(project_id as string);
       await this.insertProjectTasks(
         tasks,
         projectData.team_id,
@@ -548,7 +552,7 @@ export default class ProjectTemplatesController extends ProjectTemplatesControll
     req: IWorkLenzRequest,
     res: IWorkLenzResponse
   ): Promise<IWorkLenzResponse> {
-    if (req.user?.subscription_status === "free" && req.user?.owner_id) {
+    if (!isSelfHostedDeployment() && req.user?.subscription_status === "free" && req.user?.owner_id) {
       const limits = await getFreePlanSettings();
       const projectsCount = await getCurrentProjectsCount(req.user.owner_id);
       const projectsLimit = parseInt(limits.projects_limit);
@@ -665,6 +669,7 @@ export default class ProjectTemplatesController extends ProjectTemplatesControll
 
       // Create a clean project object with only the fields needed for create_project
       const projectData: any = {
+        project_type: req.body.project_type === "software" ? "software" : "general",
         name: projectName,
         notes: data.description ? data.description.substring(0, 500) : null, // truncate to DB limit of 500 chars
         phase_label: data.phase_label,
@@ -743,6 +748,7 @@ export default class ProjectTemplatesController extends ProjectTemplatesControll
         await this.deleteDefaultStatusForProject(project_id as string);
         await this.insertTeamLabels(labels, req.user?.team_id);
         await this.insertProjectPhases(phases, project_id as string);
+        if (projectData.project_type === "software") await ensureDefaultSoftwareSprint(project_id as string);
         await this.insertProjectStatuses(
           status,
           project_id as string,

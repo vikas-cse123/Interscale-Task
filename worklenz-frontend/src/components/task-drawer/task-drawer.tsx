@@ -87,11 +87,6 @@ const TaskDrawer = () => {
   useEffect(() => {
     if (!showTaskDrawer || !targetDrawerTab || !selectedTaskId) return;
 
-    if (isSoftwareProject) {
-      dispatch(setTargetDrawerTab(null));
-      return;
-    }
-
     if (isFree && (targetDrawerTab === 'timeLog' || targetDrawerTab === 'activityLog')) {
       dispatch(toggleUpgradeModal());
       dispatch(setTargetDrawerTab(null));
@@ -100,7 +95,7 @@ const TaskDrawer = () => {
 
     setActiveTab(targetDrawerTab);
     dispatch(setTargetDrawerTab(null));
-  }, [showTaskDrawer, targetDrawerTab, selectedTaskId, isFree, isSoftwareProject, dispatch]);
+  }, [showTaskDrawer, targetDrawerTab, selectedTaskId, isFree, dispatch]);
 
   useEffect(() => {
     if (!showTaskDrawer || taskAccessDenied) return;
@@ -131,10 +126,7 @@ const TaskDrawer = () => {
 
       if (
         selectedTaskId &&
-        (
-          taskFormViewModel?.task?.id !== selectedTaskId ||
-          !taskFormViewModel?.task?.name
-        )
+        (taskFormViewModel?.task?.id !== selectedTaskId || !taskFormViewModel?.task?.name)
       ) {
         dispatch(
           fetchTask({
@@ -278,7 +270,7 @@ const TaskDrawer = () => {
 
   const renderFooter = () => {
     if (taskAccessDenied) return null;
-    if (activeTab === 'info' || isSoftwareProject) return <InfoTabFooter />;
+    if (activeTab === 'info') return <InfoTabFooter />;
     if (activeTab === 'timeLog') {
       if (isTaskReadOnly) return null;
       if (timeLogEditing.isEditing) {
@@ -289,7 +281,6 @@ const TaskDrawer = () => {
             initialValues={timeLogEditing.logBeingEdited || undefined}
             mode={timeLogEditing.logBeingEdited ? 'edit' : 'create'}
             allowReassign={!!timeLogEditing.logBeingEdited}
-
           />
         );
       }
@@ -391,11 +382,7 @@ const TaskDrawer = () => {
             />
 
             <div style={{ padding: '0 24px' }}>
-              {isSoftwareProject ? (
-                <TaskDrawerInfoTab t={t} canCreateTask={canCreateTask} isGuest={isTaskReadOnly} />
-              ) : (
-                <Tabs type="card" items={tabItems} onChange={handleTabChange} activeKey={activeTab} />
-              )}
+              <Tabs type="card" items={tabItems} onChange={handleTabChange} activeKey={activeTab} />
             </div>
           </>
         )}

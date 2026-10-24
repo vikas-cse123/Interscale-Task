@@ -20,7 +20,6 @@ import {
   ThunderboltOutlined,
   Typography,
   WarningOutlined,
-  dayjs,
   notification,
   theme,
 } from '@/shared/antd-imports';
@@ -29,7 +28,10 @@ import { useAppDispatch } from '@/hooks/useAppDispatch';
 import { useAppSelector } from '@/hooks/useAppSelector';
 import { useAuthService } from '@/hooks/useAuth';
 import useProjectPermissions from '@/hooks/useProjectPermissions';
-import { useDeleteProjectMutation, useUpdateProjectMutation } from '@/api/projects/projects.v1.api.service';
+import {
+  useDeleteProjectMutation,
+  useUpdateProjectMutation,
+} from '@/api/projects/projects.v1.api.service';
 import { ensureCsrfToken } from '@/api/api-client';
 import { fetchClients } from '@/features/settings/client/clientSlice';
 import { fetchProjectCategories } from '@/features/projects/lookups/projectCategories/projectCategoriesSlice';
@@ -43,7 +45,8 @@ import {
 } from '@/features/project/project-drawer.slice';
 import { closeProjectSettingsModal } from '@/features/project/project-settings-modal.slice';
 import { toggleUpgradeModal } from '@/features/admin-center/admin-center.slice';
-import { hasBusinessFeatureAccess, isFreeUser } from '@/utils/subscription-utils';
+import { canUseFeature, hasBusinessFeatureAccess, isFreeUser } from '@/utils/subscription-utils';
+import { projectFinanceApiService } from '@/api/project-finance-ratecard/project-finance.api.service';
 import { hasTaskExportRoleAccess } from '@/utils/task-export-access';
 import { isTeamLeadRole } from '@/types/roles/role.types';
 import { decodeHtmlEntities } from '@/utils/html-entities';
@@ -51,11 +54,21 @@ import { getSoftwareProjectLabels } from '@/lib/project/software-project';
 import logger from '@/utils/errorLogger';
 import { IProjectViewModel } from '@/types/project/projectViewModel.types';
 import { ITeamMemberViewModel } from '@/types/teamMembers/teamMembersGetResponse.types';
+import {
+  buildFormValues,
+  buildProjectModel,
+  type SoftwareSettingsFormValues,
+} from './software-project-settings-model';
 
 import ManageStatusContent from '@/components/task-management/ManageStatusContent';
 import IntegrationsSettingsSection from '../project-settings-modal/sections/integrations-settings-section';
 import TaskExportSettingsSection from '../project-settings-modal/sections/task-export-settings-section';
 import DangerZoneSection from '../project-settings-modal/sections/danger-zone-section';
+import AdvancedSettingsSection from '../project-settings-modal/sections/AdvancedSettingsSection';
+import BudgetSettingsSection from '../project-settings-modal/sections/BudgetSettingsSection';
+import CustomColumnsSettingsSection from '../project-settings-modal/sections/custom-columns-settings-section';
+import { useDeliveryConfidence } from '../project-settings-modal/hooks/useDeliveryConfidence';
+import { progressTrackingApiService } from '@/api/reporting/progress-tracking.api.service';
 import { SectionHeader } from './components/section-header';
 import { SoftwareDetailsSection } from './sections/software-details-section';
 import { SoftwareTeamAccessSection } from './sections/software-team-access-section';
@@ -100,9 +113,16 @@ export const SoftwareProjectSettingsModal = ({ onClose }: SoftwareProjectSetting
   const isFreePlan = isFreeUser(currentSession);
   const hasBusinessAccess = hasBusinessFeatureAccess(currentSession);
   const canEditSettings = permissions.settings;
+  const hasFinanceAccess = canUseFeature(currentSession, 'finance_module');
+  const canManageBudget = hasFinanceAccess && permissions.finance;
   const canViewExport = hasTaskExportRoleAccess(isOwnerOrAdmin, isProjectManager, isTeamLead);
   const softwareLabels = getSoftwareProjectLabels('software');
   const isProjectReady = Boolean(project?.id) && !projectLoading;
+  const { savedConfidenceRef, confidenceLoadedRef } = useDeliveryConfidence(
+    form,
+    isOpen,
+    projectId
+  );
 
   useEffect(() => {
     if (!isOpen) return;
@@ -146,7 +166,7 @@ export const SoftwareProjectSettingsModal = ({ onClose }: SoftwareProjectSetting
   }, [dispatch, form, onClose]);
 
   const handleSubmit = async (values: SoftwareSettingsFormValues) => {
-    if (!projectId || !project) return;
+    if (!projectId || !project || !canEditSettings) return;
 
     try {
       const csrfToken = await ensureCsrfToken();
@@ -180,6 +200,35 @@ export const SoftwareProjectSettingsModal = ({ onClose }: SoftwareProjectSetting
       }
 
       if (response.data.body) dispatch(mergeProject(response.data.body));
+      if (
+        values.delivery_confidence !== undefined ||
+        values.delivery_confidence_note !== undefined
+      ) {
+        if (!confidenceLoadedRef.current) throw new Error('Delivery confidence did not load');
+        const status =
+          values.delivery_confidence === 'unset' ? null : (values.delivery_confidence ?? null);
+        const note = values.delivery_confidence_note?.trim() || null;
+        const saved = savedConfidenceRef.current;
+        if (status !== saved.status || note !== saved.note) {
+          const result = await progressTrackingApiService.updateConfidence(projectId, {
+            status,
+            note,
+          });
+          if (!result.done) throw new Error('Delivery confidence update failed');
+        }
+      }
+      if (canManageBudget) {
+        const budget = Number(values.budget ?? project.budget ?? 0);
+        const currency = values.currency ?? project.currency ?? 'USD';
+        if (budget !== Number(project.budget ?? 0)) {
+          const result = await projectFinanceApiService.updateProjectBudget(projectId, budget);
+          if (!result.done) throw new Error(result.message || 'Budget update failed');
+        }
+        if (currency !== (project.currency || 'USD')) {
+          const result = await projectFinanceApiService.updateProjectCurrency(projectId, currency);
+          if (!result.done) throw new Error(result.message || 'Currency update failed');
+        }
+      }
       notification.success({
         message: t('softwareSettings.saved', { defaultValue: 'Project settings saved' }),
         duration: 2,
@@ -197,7 +246,9 @@ export const SoftwareProjectSettingsModal = ({ onClose }: SoftwareProjectSetting
     } catch (error) {
       logger.error('Error saving software project settings', error);
       notification.error({
-        message: t('softwareSettings.saveError', { defaultValue: 'Could not save project settings' }),
+        message: t('softwareSettings.saveError', {
+          defaultValue: 'Could not save project settings',
+        }),
       });
     }
   };
@@ -213,7 +264,9 @@ export const SoftwareProjectSettingsModal = ({ onClose }: SoftwareProjectSetting
         notification.error({
           message:
             response?.data?.message ||
-            t('deleteProjectError', { defaultValue: 'Failed to delete project. Please try again.' }),
+            t('deleteProjectError', {
+              defaultValue: 'Failed to delete project. Please try again.',
+            }),
         });
         return;
       }
@@ -326,6 +379,52 @@ export const SoftwareProjectSettingsModal = ({ onClose }: SoftwareProjectSetting
         ) : null,
       },
       {
+        key: 'advanced',
+        group: 'configuration',
+        icon: <ThunderboltOutlined />,
+        label: t('advancedSettingsTab', { defaultValue: 'Advanced Settings' }),
+        isFormSection: true,
+        content: (
+          <AdvancedSettingsSection
+            form={form}
+            disabled={!canEditSettings}
+            canRestrictTaskCreation={canUseFeature(currentSession, 'restrict_task_creation')}
+            onUpgradeClick={handleUpgrade}
+          />
+        ),
+      },
+      {
+        key: 'customFields',
+        group: 'configuration',
+        icon: <ProfileOutlined />,
+        label: t('customColumnsTab', { defaultValue: 'Custom Columns' }),
+        content: (
+          <CustomColumnsSettingsSection
+            projectId={projectId}
+            disabled={!permissions.customColumns}
+          />
+        ),
+      },
+      ...(canManageBudget
+        ? [
+            {
+              key: 'budget' as const,
+              group: 'configuration' as const,
+              icon: <NumberOutlined />,
+              label: t('budgetSettingsTab', { defaultValue: 'Budget Settings' }),
+              isFormSection: true,
+              content: (
+                <BudgetSettingsSection
+                  editMode
+                  canManage={canEditSettings && canManageBudget}
+                  hasFinanceAccess={hasFinanceAccess}
+                  onUpgradeClick={handleUpgrade}
+                />
+              ),
+            },
+          ]
+        : []),
+      {
         key: 'integrations',
         group: 'configuration',
         icon: <ApiOutlined />,
@@ -373,6 +472,9 @@ export const SoftwareProjectSettingsModal = ({ onClose }: SoftwareProjectSetting
     permissions,
     isFreePlan,
     hasBusinessAccess,
+    currentSession,
+    hasFinanceAccess,
+    canManageBudget,
     selectedProjectLead,
     handleUpgrade,
     softwareLabels.phasePlural,
@@ -470,7 +572,9 @@ export const SoftwareProjectSettingsModal = ({ onClose }: SoftwareProjectSetting
                 })}
           </Typography.Text>
           <Flex gap={8}>
-            <Button onClick={handleClose}>{t('softwareSettings.close', { defaultValue: 'Close' })}</Button>
+            <Button onClick={handleClose}>
+              {t('softwareSettings.close', { defaultValue: 'Close' })}
+            </Button>
             {isFormSectionActive && canEditSettings && (
               <Button
                 type="primary"
@@ -512,7 +616,10 @@ export const SoftwareProjectSettingsModal = ({ onClose }: SoftwareProjectSetting
             />
           </nav>
 
-          <div className="min-w-0 flex-1 overflow-y-auto" style={{ padding: '20px 24px', maxHeight: '72vh' }}>
+          <div
+            className="min-w-0 flex-1 overflow-y-auto"
+            style={{ padding: '20px 24px', maxHeight: '72vh' }}
+          >
             <div className="mb-4 sm:hidden">
               <Menu
                 mode="horizontal"
@@ -523,12 +630,7 @@ export const SoftwareProjectSettingsModal = ({ onClose }: SoftwareProjectSetting
             </div>
 
             {!canEditSettings && (
-              <Alert
-                type="warning"
-                showIcon
-                className="mb-4"
-                message={t('noPermission')}
-              />
+              <Alert type="warning" showIcon className="mb-4" message={t('noPermission')} />
             )}
 
             <Form
@@ -554,68 +656,6 @@ export const SoftwareProjectSettingsModal = ({ onClose }: SoftwareProjectSetting
   );
 };
 
-const buildFormValues = (project: IProjectViewModel): SoftwareSettingsFormValues => ({
-  name: decodeHtmlEntities(project.name ?? ''),
-  key: project.key ?? '',
-  notes: project.notes ? decodeHtmlEntities(project.notes.slice(0, 500)) : '',
-  color_code: project.color_code,
-  status_id: project.status_id,
-  health_id: project.health_id ?? undefined,
-  priority_id: project.priority_id ?? undefined,
-  category_id: project.category_id ?? null,
-  client_id: project.client_id ?? null,
-  client_name: project.client_name ?? null,
-  start_date: project.start_date ? dayjs(project.start_date) : null,
-  end_date: project.end_date ? dayjs(project.end_date) : null,
-  finance_access:
-    typeof project.project_manager?.finance_access === 'boolean'
-      ? project.project_manager.finance_access
-      : true,
-  auto_assign_task_creator: Boolean(project.auto_assign_task_creator),
-  restrict_task_creation: Boolean(project.restrict_task_creation),
-  restrict_tasks_to_assignee: Boolean(project.restrict_tasks_to_assignee),
-});
-
-/**
- * update_project overwrites every column it receives, so settings this modal
- * does not expose are carried over from the loaded project unchanged.
- */
-const buildProjectModel = ({
-  project,
-  values,
-  projectLead,
-  canAssignLead,
-  canManageVisibility,
-}: BuildProjectModelArgs): IProjectViewModel => ({
-  name: values.name,
-  key: values.key?.toUpperCase(),
-  notes: values.notes,
-  color_code: values.color_code,
-  status_id: values.status_id,
-  health_id: values.health_id,
-  priority_id: values.priority_id || null,
-  category_id: values.category_id || null,
-  client_id: values.client_id ?? undefined,
-  client_name: values.client_name,
-  start_date: values.start_date ? values.start_date.format('YYYY-MM-DD') : undefined,
-  end_date: values.end_date ? values.end_date.format('YYYY-MM-DD') : undefined,
-  project_manager: projectLead,
-  ...(canAssignLead ? { finance_access: values.finance_access !== false } : {}),
-  auto_assign_task_creator: Boolean(values.auto_assign_task_creator),
-  restrict_task_creation: Boolean(values.restrict_task_creation),
-  ...(canManageVisibility
-    ? { restrict_tasks_to_assignee: Boolean(values.restrict_tasks_to_assignee) }
-    : {}),
-  working_days: project.working_days ?? 0,
-  man_days: project.man_days ?? 0,
-  hours_per_day: project.hours_per_day ?? 8,
-  use_manual_progress: Boolean(project.use_manual_progress),
-  use_weighted_progress: Boolean(project.use_weighted_progress),
-  use_time_progress: Boolean(project.use_time_progress),
-  phase_assignees_enabled: Boolean(project.phase_assignees_enabled),
-  auto_assign_subtask_phase: Boolean(project.auto_assign_subtask_phase),
-});
-
 const SECTION_GROUP_ORDER: SectionGroup[] = ['project', 'delivery', 'configuration', 'danger'];
 
 type SoftwareSettingsSection =
@@ -625,6 +665,8 @@ type SoftwareSettingsSection =
   | 'sprints'
   | 'estimation'
   | 'customFields'
+  | 'advanced'
+  | 'budget'
   | 'integrations'
   | 'export'
   | 'dangerZone';
@@ -642,33 +684,6 @@ interface SectionItem {
 
 interface SoftwareProjectSettingsModalProps {
   onClose: () => void;
-}
-
-interface SoftwareSettingsFormValues {
-  name: string;
-  key?: string;
-  notes?: string;
-  color_code?: string;
-  status_id?: string;
-  health_id?: string;
-  priority_id?: string;
-  category_id?: string | null;
-  client_id?: string | null;
-  client_name?: string | null;
-  start_date?: dayjs.Dayjs | null;
-  end_date?: dayjs.Dayjs | null;
-  finance_access?: boolean;
-  auto_assign_task_creator?: boolean;
-  restrict_task_creation?: boolean;
-  restrict_tasks_to_assignee?: boolean;
-}
-
-interface BuildProjectModelArgs {
-  project: IProjectViewModel;
-  values: SoftwareSettingsFormValues;
-  projectLead: ITeamMemberViewModel | null;
-  canAssignLead: boolean;
-  canManageVisibility: boolean;
 }
 
 export default SoftwareProjectSettingsModal;

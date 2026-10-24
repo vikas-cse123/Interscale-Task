@@ -1,6 +1,6 @@
 services:
   backend:
-    image: worklenz-backend:3.2.1-tzfix-digestfix3
+    image: worklenz-backend:3.2.0-tzfix-digestfix1
   frontend:
     image: worklenz-frontend:3.2.1-clientportal
   client-portal:

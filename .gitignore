@@ -4,6 +4,9 @@ node_modules/
 .pnp.js
 
 # Build outputs
+# Local production/database backups must never enter release history.
+/pg_backups/
+
 dist/
 build/
 out/

@@ -109,6 +109,7 @@ export interface IProjectTemplateSettingsOverrides {
 
 export interface ICustomProjectTemplateImportRequest {
   template_id: string;
+  project_type?: 'general' | 'software';
   project_name?: string;
   color_code?: string;
   /** Required for date-offset application when template has dateOffsets. */
@@ -180,8 +181,7 @@ export interface ICustomProjectTemplateDefinitionPayload {
 }
 
 /** Copy & Customize request — built-in source plus optional edited definition. */
-export interface ICustomFromWorklenzTemplateRequest
-  extends Partial<ICustomProjectTemplateDefinitionPayload> {
+export interface ICustomFromWorklenzTemplateRequest extends Partial<ICustomProjectTemplateDefinitionPayload> {
   worklenz_template_id: string;
   /** Preferred template name; defaults to "Copy of {built-in name}" on the server. */
   templateName?: string;

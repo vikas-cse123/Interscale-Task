@@ -160,7 +160,7 @@ jobs:
         # resolution). The full suite is not gated: it has pre-existing
         # failures unrelated to deployment safety; the production build below
         # additionally runs every locale validation in strict mode.
-        run: npx vitest run src/pages/home/home-my-team/HomeMyTeam.test.tsx src/pages/home/home-team-members-widget/HomeTeamMembersWidget.test.tsx src/utils/__tests__/role-permissions.utils.test.ts
+        run: npx vitest run src/pages/home/home-my-team/HomeMyTeam.test.tsx src/pages/home/home-team-members-widget/HomeTeamMembersWidget.test.tsx src/utils/__tests__/role-permissions.utils.test.ts src/lib/project/project-feature-availability.test.tsx src/components/projects/create-project-modal/create-project-modal.software.test.tsx src/components/projects/software-project-settings-modal/software-project-settings-modal.test.tsx src/components/projects/software-project-settings-modal/software-project-settings-model.test.ts src/components/task-drawer/task-drawer.software.test.tsx src/components/task-drawer/shared/info-tab/task-drawer-info-tab.test.tsx src/pages/projects/projectView/workload/ProjectViewWorkload.software.test.tsx src/pages/projects/projectView/finance/ProjectViewFinance.software.test.tsx src/utils/subscription-utils.canUseFeature.test.ts
 
       - name: Production build (runs all locale checks in strict mode)
         run: npm run build
@@ -192,6 +192,12 @@ jobs:
 
       - name: TypeScript compile check (same as CI)
         run: npm run compile:prod
+
+      - name: Project feature and authorization regression tests
+        run: npx jest --runInBand --coverage=false src/tests/activity-log-access-route.spec.ts src/tests/software-project-features.spec.ts src/tests/software-template-import.spec.ts src/tests/entitlement-gates.spec.ts src/tests/verify-task-access.spec.ts src/tests/verify-project-access.spec.ts src/tests/project-access.spec.ts src/tests/require-project-permission.spec.ts src/tests/task-work-log-access.spec.ts src/tests/template-create-access.spec.ts
+
+      - name: Deployment safety regression tests
+        run: node --test ../.github/scripts/prod-deploy.test.cjs
 
   gate-client-portal:
     name: Client portal production build
@@ -229,9 +235,13 @@ jobs:
     # The matrix contains ONLY changed services (built by the changes job),
     # so unchanged services are never built, tagged, or transferred.
     if: >-
-      needs.changes.outputs.frontend == 'true' ||
+      always() && !cancelled() && needs.changes.result == 'success' &&
+      (needs.gate-frontend.result == 'success' || needs.gate-frontend.result == 'skipped') &&
+      (needs.gate-backend.result == 'success' || needs.gate-backend.result == 'skipped') &&
+      (needs.gate-client-portal.result == 'success' || needs.gate-client-portal.result == 'skipped') &&
+      (needs.changes.outputs.frontend == 'true' ||
       needs.changes.outputs.backend == 'true' ||
-      needs.changes.outputs.client_portal == 'true'
+      needs.changes.outputs.client_portal == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
@@ -324,7 +334,16 @@ jobs:
           PORT="${PROD_SSH_PORT:-22}"
           SSH_BASE_OPTS="-o StrictHostKeyChecking=no -o ConnectTimeout=30"
           # shellcheck disable=SC2088
-          REMOTE_DIR="${{ env.PROD_DIR }}/../prod-deploy-incoming"
+          REMOTE_DIR="${{ env.PROD_DIR }}/../prod-deploy-incoming/${{ github.run_id }}-${{ github.run_attempt }}"
+          # Budget a complete unpacked copy plus the transferred archives and 1 GiB reserve.
+          # Do this before transfer or docker load; never prune backups/images to make room.
+          REQUIRED_BYTES=1073741824
+          for archive in /tmp/prod-images/*.tar.gz; do
+            REQUIRED_BYTES=$((REQUIRED_BYTES + $(stat -c %s "$archive") + $(gzip -dc "$archive" | wc -c)))
+          done
+          AVAILABLE_BYTES="$(ssh $SSH_BASE_OPTS -p "$PORT" "$PROD_SSH_USER@$PROD_SSH_HOST" "df -B1 --output=avail ${{ env.PROD_DIR }} | tail -1" | tr -d '[:space:]')"
+          echo "Deployment storage: available=$AVAILABLE_BYTES required=$REQUIRED_BYTES"
+          [ "$AVAILABLE_BYTES" -ge "$REQUIRED_BYTES" ] || { echo '::error::Insufficient production disk space; no files transferred or images loaded.'; exit 1; }
           # shellcheck disable=SC2029
           ssh $SSH_BASE_OPTS -p "$PORT" "$PROD_SSH_USER@$PROD_SSH_HOST" "mkdir -p $REMOTE_DIR"
           scp $SSH_BASE_OPTS -P "$PORT" /tmp/prod-images/*.tar.gz \
@@ -348,7 +367,7 @@ jobs:
           if [ "${{ needs.changes.outputs.client_portal }}" = "true" ]; then SERVICES="$SERVICES client-portal"; fi
           DRY_RUN=""
           if [ "${{ needs.changes.outputs.dry_run }}" = "true" ]; then DRY_RUN="--dry-run"; fi
-          INCOMING_DIR="${{ env.PROD_DIR }}/../prod-deploy-incoming"
+          INCOMING_DIR="${{ env.PROD_DIR }}/../prod-deploy-incoming/${{ github.run_id }}-${{ github.run_attempt }}"
           # shellcheck disable=SC2088,SC2029
           ssh $SSH_BASE_OPTS -p "$PORT" "$PROD_SSH_USER@$PROD_SSH_HOST" \
             "bash $INCOMING_DIR/prod-deploy.sh \
