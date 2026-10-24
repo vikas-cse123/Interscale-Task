@@ -6,14 +6,13 @@ import {
   theme,
   Select,
   Dropdown,
-  Popconfirm,
+  Modal,
   MenuProps,
   message,
   EditOutlined,
   DeleteOutlined,
   MoreOutlined,
   UserSwitchOutlined,
-  ExclamationCircleFilled,
 } from '@/shared/antd-imports';
 import { teamMembersApiService } from '@/api/team-members/teamMembers.api.service';
 import { ITeamMemberViewModel } from '@/types/teamMembers/teamMembersGetResponse.types';
@@ -92,6 +91,8 @@ const HomeMyTeam: React.FC = () => {
       } else {
         message.error(res.message || 'Unable to update member status.');
       }
+    } catch {
+      message.error(t('myTeam.statusToggleError', { defaultValue: 'Unable to update member status.' }));
     } finally {
       setLoading(false);
     }
@@ -105,10 +106,47 @@ const HomeMyTeam: React.FC = () => {
       if (res.done) {
         await fetchMembers();
         dispatch(fetchBillingInfo());
+      } else if (res.message) {
+        message.error(res.message);
+      } else {
+        message.error(
+          t('myTeam.deleteError', { defaultValue: 'Failed to remove the team member.' })
+        );
       }
+    } catch {
+      message.error(
+        t('myTeam.deleteError', { defaultValue: 'Failed to remove the team member.' })
+      );
     } finally {
       setLoading(false);
     }
+  };
+
+  const confirmStatusChange = (record: ITeamMemberViewModel) => {
+    Modal.confirm({
+      title: record.active
+        ? t('myTeam.statusToggleConfirmDeactivate', {
+            defaultValue: 'Are you sure you want to deactivate this member?',
+          })
+        : t('myTeam.statusToggleConfirmActivate', {
+            defaultValue: 'Are you sure you want to activate this member?',
+          }),
+      okText: t('myTeam.statusToggleOk', { defaultValue: 'Yes' }),
+      cancelText: t('myTeam.statusToggleCancel', { defaultValue: 'Cancel' }),
+      onOk: () => handleStatusChange(record),
+    });
+  };
+
+  const confirmDeleteMember = (record: ITeamMemberViewModel) => {
+    Modal.confirm({
+      title: t('myTeam.deleteConfirmTitle', {
+        defaultValue: 'Are you sure you want to remove this member?',
+      }),
+      okText: t('myTeam.deleteOk', { defaultValue: 'Yes' }),
+      cancelText: t('myTeam.deleteCancel', { defaultValue: 'Cancel' }),
+      okType: 'danger',
+      onOk: () => handleDeleteMember(record),
+    });
   };
 
   const handleEditClick = (record: ITeamMemberViewModel) => {
@@ -145,6 +183,13 @@ const HomeMyTeam: React.FC = () => {
 
   const getActionMenuItems = (record: ITeamMemberViewModel): MenuProps['items'] => {
     const canManage = canManageUser(record.role_name);
+    // Never offer Remove/Deactivate for the Owner row or for yourself. The backend
+    // rejects both (owner protection + self-removal guard), so disabling here avoids
+    // a confusing round-trip. Edit keeps its existing rule.
+    const isSelf = !!record.id && !!currentUser?.team_member_id && record.id === currentUser.team_member_id;
+    const isTargetOwner = record.role_name?.toLowerCase() === 'owner';
+    const canChangeStatus = canManage && !isSelf && !isTargetOwner;
+    const canRemove = canManage && !isSelf && !isTargetOwner;
 
     return [
       {
@@ -152,44 +197,30 @@ const HomeMyTeam: React.FC = () => {
         label: t('myTeam.actionEdit', { defaultValue: 'Edit' }),
         icon: <EditOutlined />,
         disabled: !canManage,
-        onClick: () => canManage && handleEditClick(record),
+        onClick: () => {
+          if (canManage) handleEditClick(record);
+        },
       },
       {
         key: 'status',
-        disabled: !canManage,
-        label: (
-          <Popconfirm
-            title={record.active ? t('myTeam.statusToggleConfirmDeactivate', { defaultValue: 'Are you sure you want to deactivate this member?' }) : t('myTeam.statusToggleConfirmActivate', { defaultValue: 'Are you sure you want to activate this member?' })}
-            icon={<ExclamationCircleFilled style={{ color: token.colorWarning }} />}
-            okText={t('myTeam.statusToggleOk', { defaultValue: 'Yes' })}
-            cancelText={t('myTeam.statusToggleCancel', { defaultValue: 'Cancel' })}
-            disabled={!canManage}
-            onConfirm={() => canManage && handleStatusChange(record)}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%' }}>
-               <UserSwitchOutlined /> {record.active ? t('myTeam.statusToggleLabelDeactivate', { defaultValue: 'Deactivate' }) : t('myTeam.statusToggleLabelActivate', { defaultValue: 'Activate' })}
-            </div>
-          </Popconfirm>
-        ),
+        label: record.active
+          ? t('myTeam.statusToggleLabelDeactivate', { defaultValue: 'Deactivate' })
+          : t('myTeam.statusToggleLabelActivate', { defaultValue: 'Activate' }),
+        icon: <UserSwitchOutlined />,
+        disabled: !canChangeStatus,
+        onClick: () => {
+          if (canChangeStatus) confirmStatusChange(record);
+        },
       },
       {
         key: 'delete',
+        label: t('myTeam.deleteLabel', { defaultValue: 'Remove' }),
+        icon: <DeleteOutlined />,
         danger: true,
-        disabled: !canManage,
-        label: (
-          <Popconfirm
-            title={t('myTeam.deleteConfirmTitle', { defaultValue: 'Are you sure you want to remove this member?' })}
-            icon={<ExclamationCircleFilled style={{ color: token.colorError }} />}
-            okText={t('myTeam.deleteOk', { defaultValue: 'Yes' })}
-            cancelText={t('myTeam.deleteCancel', { defaultValue: 'Cancel' })}
-            disabled={!canManage}
-            onConfirm={() => canManage && handleDeleteMember(record)}
-          >
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%' }}>
-                <DeleteOutlined /> {t('myTeam.deleteLabel', { defaultValue: 'Remove' })}
-            </div>
-          </Popconfirm>
-        ),
+        disabled: !canRemove,
+        onClick: () => {
+          if (canRemove) confirmDeleteMember(record);
+        },
       },
     ];
   };
@@ -223,9 +254,11 @@ const HomeMyTeam: React.FC = () => {
           <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0 }}>{t('myTeam.pageTitle', { defaultValue: 'My Team' })}</h1>
           <p style={{ opacity: 0.5, fontSize: 13, margin: '4px 0 0' }}>{t('myTeam.pageSubtitle', { defaultValue: 'Manage your team members and their roles.' })}</p>
         </div>
-        <Button type="primary" onClick={() => dispatch(toggleInviteMemberDrawer())}>
-          {t('myTeam.inviteMember', { defaultValue: 'Invite Member' })}
-        </Button>
+        {isPrivilegedUser && (
+          <Button type="primary" onClick={() => dispatch(toggleInviteMemberDrawer())}>
+            {t('myTeam.inviteMember', { defaultValue: 'Invite Member' })}
+          </Button>
+        )}
       </div>
 
       <div style={cardStyle}>
@@ -260,9 +293,11 @@ const HomeMyTeam: React.FC = () => {
                       <p style={{ opacity: 0.6, fontSize: 13, margin: 0, maxWidth: 360 }}>
                         {t('myTeam.emptySubtitle', { defaultValue: 'Get started by inviting your first team member.' })}
                       </p>
-                      <Button type="primary" onClick={() => dispatch(toggleInviteMemberDrawer())}>
-                        {t('myTeam.inviteMember', { defaultValue: 'Invite Member' })}
-                      </Button>
+                      {isPrivilegedUser && (
+                        <Button type="primary" onClick={() => dispatch(toggleInviteMemberDrawer())}>
+                          {t('myTeam.inviteMember', { defaultValue: 'Invite Member' })}
+                        </Button>
+                      )}
                     </div>
                   </td>
                 </tr>

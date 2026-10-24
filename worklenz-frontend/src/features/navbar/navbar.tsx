@@ -378,7 +378,11 @@ const Navbar = () => {
         </Flex>
       </Flex>
 
-      {canInviteMembers && createPortal(<InviteTeamMembers />, document.body, 'invite-team-members')}
+      {/* Always mounted: My Team / Quick Actions / Planner dispatch toggleInviteMemberDrawer()
+          and expect this modal. Gating the mount (canInviteMembers && ...) made Invite do
+          nothing whenever the gate was false/stale. Triggers remain permission-gated;
+          submit paths are still authorized server-side. */}
+      {createPortal(<InviteTeamMembers />, document.body, 'invite-team-members')}
       {createPortal(<NotificationDrawer />, document.body, 'notification-drawer')}
       {createPortal(<AddClientDrawer />, document.body, 'add-client-drawer')}
       {createPortal(<UpgradePromptModal />, document.body, 'upgrade-prompt-modal')}
