@@ -18,6 +18,7 @@ import { ActivityLoggingService } from "../services/activity-logging.service";
 import { NON_GUEST_ACCESS_JOIN, NON_GUEST_ACCESS_PREDICATE } from "../shared/guest-access-sql";
 import { getProjectAccessForRequest } from "../shared/project-access";
 import { stripProjectFinanceFields } from "../shared/strip-finance-fields";
+import { ensureDefaultSoftwareSprint } from "../shared/software-project-defaults";
 import { actorFromSessionUser, logAuditEvent } from "../services/audit-log.service";
 import { captureProjectSettings, logProjectSettingChanges } from "../services/project-settings-audit.service";
 import { AUDIT_EVENT_TYPE } from "../shared/audit-log-constants";
@@ -119,7 +120,7 @@ export default class ProjectsController extends WorklenzControllerBase {
       await this.setProjectPriority(data.project.id, req.body.priority_id, req.user?.team_id || null);
 
       if (data.project.project_type === "software") {
-        await this.createDefaultSprint(data.project.id);
+        await ensureDefaultSoftwareSprint(data.project.id);
       }
 
       await ActivityLoggingService.logProjectCreated(
@@ -145,19 +146,6 @@ export default class ProjectsController extends WorklenzControllerBase {
 
     return res.status(200).send(new ServerResponse(true, data.project || {}));
   }
-
-  /** New software projects start with a planned "Sprint 1" so the Backlog is ready for planning. */
-  private static async createDefaultSprint(projectId: string): Promise<void> {
-    const q = `
-      INSERT INTO project_phases (name, color_code, project_id, sort_index, sprint_status)
-      SELECT $2, $3, $1, 1, 'planned'
-      WHERE NOT EXISTS (SELECT 1 FROM project_phases WHERE project_id = $1);
-    `;
-    await db.query(q, [projectId, this.DEFAULT_SPRINT_NAME, this.DEFAULT_SPRINT_COLOR]);
-  }
-
-  private static readonly DEFAULT_SPRINT_NAME = "Sprint 1";
-  private static readonly DEFAULT_SPRINT_COLOR = "#fbc84c";
 
   @HandleExceptions()
   public static async updatePinnedView(req: IWorkLenzRequest, res: IWorkLenzResponse): Promise<IWorkLenzResponse> {

@@ -1,15 +1,5 @@
 import { useTranslation } from 'react-i18next';
-import {
-  Col,
-  ColorPicker,
-  DatePicker,
-  Flex,
-  Form,
-  FormInstance,
-  Input,
-  Row,
-  dayjs,
-} from '@/shared/antd-imports';
+import { Col, ColorPicker, Flex, Form, FormInstance, Input, Row } from '@/shared/antd-imports';
 
 import { useAppSelector } from '@/hooks/useAppSelector';
 import { IProjectViewModel } from '@/types/project/projectViewModel.types';
@@ -20,6 +10,9 @@ import ProjectCategorySection from '../../project-drawer/project-category-sectio
 import ProjectClientSection from '../../project-drawer/project-client-section/project-client-section';
 import SettingsCard from '../../project-settings-modal/components/settings-card';
 import { SectionHeader } from '../components/section-header';
+import TimelineEstimatesCard from '../../project-settings-modal/sections/TimelineEstimatesCard';
+import { useProjectDateSync } from '../../project-settings-modal/hooks/useProjectDateSync';
+import DeliveryConfidenceSettingsSection from '../../project-settings-modal/sections/delivery-confidence-settings-section';
 
 interface SoftwareDetailsSectionProps {
   form: FormInstance;
@@ -42,17 +35,7 @@ export const SoftwareDetailsSection = ({
 
   const keyPreview = (Form.useWatch('key', form) as string | undefined)?.trim().toUpperCase();
 
-  const validateEndDate = (_: unknown, value: dayjs.Dayjs | null) => {
-    const startDate = form.getFieldValue('start_date') as dayjs.Dayjs | null;
-    if (value && startDate && value.isBefore(startDate, 'day')) {
-      return Promise.reject(
-        new Error(
-          t('endDateBeforeStartDate', { defaultValue: 'End date cannot be earlier than start date' })
-        )
-      );
-    }
-    return Promise.resolve();
-  };
+  const dateSync = useProjectDateSync(form, project?.id ?? null);
 
   return (
     <Flex vertical gap={16}>
@@ -125,11 +108,7 @@ export const SoftwareDetailsSection = ({
           getValueFromEvent={(color: { toHexString: () => string }) => color.toHexString()}
           style={{ marginBottom: 0 }}
         >
-          <ColorPicker
-            disabled={disabled}
-            disabledAlpha
-            aria-label={t('projectColor')}
-          />
+          <ColorPicker disabled={disabled} disabledAlpha aria-label={t('projectColor')} />
         </Form.Item>
       </SettingsCard>
 
@@ -145,6 +124,7 @@ export const SoftwareDetailsSection = ({
         />
         <ProjectPrioritySection priorities={priorities} form={form} t={t} disabled={disabled} />
         <ProjectCategorySection form={form} t={t} disabled={isFreePlan || disabled} />
+        <DeliveryConfidenceSettingsSection form={form} t={t} disabled={disabled} />
         <ProjectClientSection
           clients={clients}
           form={form}
@@ -155,31 +135,14 @@ export const SoftwareDetailsSection = ({
         />
       </SettingsCard>
 
-      <SettingsCard
-        title={t('softwareSettings.timelineCard', { defaultValue: 'Timeline' })}
-        description={t('softwareSettings.timelineDescription', {
-          defaultValue: 'Optional target window for the whole project. Sprints have their own dates.',
-        })}
-      >
-        <Row gutter={12}>
-          <Col xs={24} sm={12}>
-            <Form.Item name="start_date" label={t('startDate')} style={{ marginBottom: 0 }}>
-              <DatePicker className="w-full" disabled={disabled} />
-            </Form.Item>
-          </Col>
-          <Col xs={24} sm={12}>
-            <Form.Item
-              name="end_date"
-              label={t('endDate')}
-              dependencies={['start_date']}
-              rules={[{ validator: validateEndDate }]}
-              style={{ marginBottom: 0 }}
-            >
-              <DatePicker className="w-full" disabled={disabled} />
-            </Form.Item>
-          </Col>
-        </Row>
-      </SettingsCard>
+      <TimelineEstimatesCard
+        form={form}
+        disabled={disabled}
+        disabledStartDate={dateSync.disabledStartDate}
+        disabledEndDate={dateSync.disabledEndDate}
+        onStartDateChange={dateSync.handleStartDateChange}
+        onEndDateChange={dateSync.handleEndDateChange}
+      />
     </Flex>
   );
 };

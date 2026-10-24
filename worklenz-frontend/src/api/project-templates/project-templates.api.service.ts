@@ -8,7 +8,13 @@ import {
   IWorklenzTemplate,
 } from '@/types/project-templates/project-templates.types';
 import apiClient from '../api-client';
-import { ICustomProjectTemplateCreateRequest, ICustomProjectTemplateImportRequest, ICustomProjectTemplateImportResult, ICustomProjectTemplateDefinitionPayload, ICustomFromWorklenzTemplateRequest } from '@/types/project/projectTemplate.types';
+import {
+  ICustomProjectTemplateCreateRequest,
+  ICustomProjectTemplateImportRequest,
+  ICustomProjectTemplateImportResult,
+  ICustomProjectTemplateDefinitionPayload,
+  ICustomFromWorklenzTemplateRequest,
+} from '@/types/project/projectTemplate.types';
 
 const rootUrl = `${API_BASE_URL}/project-templates`;
 const onboardingRootUrl = `${API_BASE_URL}/onboarding`;
@@ -23,9 +29,13 @@ export const projectTemplatesApiService = {
     id: string,
     scope: 'team' | 'organization'
   ): Promise<IServerResponse<{ id: string; scope: string }>> => {
-    const response = await apiClient.patch(`${rootUrl}/custom-template/${id}/scope`, { scope }, {
-      headers: { 'X-Silent-Request': '1' },
-    });
+    const response = await apiClient.patch(
+      `${rootUrl}/custom-template/${id}/scope`,
+      { scope },
+      {
+        headers: { 'X-Silent-Request': '1' },
+      }
+    );
     return response.data;
   },
   getWorklenzTemplates: async (): Promise<IServerResponse<IWorklenzTemplate[]>> => {
@@ -44,10 +54,9 @@ export const projectTemplatesApiService = {
   },
 
   getCustomTemplateById: async (templateId: string): Promise<IServerResponse<IProjectTemplate>> => {
-  const response = await apiClient.get(`${rootUrl}/custom-template/${templateId}`);
-  return response.data;
-},
-
+    const response = await apiClient.get(`${rootUrl}/custom-template/${templateId}`);
+    return response.data;
+  },
 
   setupAccount: async (
     model: IAccountSetupRequest
@@ -72,6 +81,7 @@ export const projectTemplatesApiService = {
 
   createFromWorklenzTemplate: async (body: {
     template_id: string;
+    project_type?: 'general' | 'software';
     project_name?: string;
     color_code?: string;
   }): Promise<IServerResponse<IProjectTemplate>> => {

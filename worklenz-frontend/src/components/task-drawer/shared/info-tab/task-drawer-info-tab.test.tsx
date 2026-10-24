@@ -1,14 +1,23 @@
 import React from 'react';
-import { render, fireEvent, screen, waitFor } from '@testing-library/react';
+import { render as renderComponent, fireEvent, screen, waitFor } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import { describe, it, expect, vi } from 'vitest';
 import type { TFunction } from 'i18next';
 
-const mockDrawerState = vi.hoisted(() => ({ targetCommentId: null as string | null }));
+const mockDrawerState = vi.hoisted(() => ({
+  targetCommentId: null as string | null,
+  projectType: 'general',
+}));
+vi.mock('./TaskDrawerDevelopment', () => ({ default: () => <div>Development content</div> }));
 
 // Heavy drawer children are irrelevant to paste handling.
-vi.mock('./description-editor', () => ({ default: () => <div data-testid="description-editor" /> }));
+vi.mock('./description-editor', () => ({
+  default: () => <div data-testid="description-editor" />,
+}));
 vi.mock('./subtask-table', () => ({ default: () => <div data-testid="subtask-table" /> }));
-vi.mock('./dependencies-table', () => ({ default: () => <div data-testid="dependencies-table" /> }));
+vi.mock('./dependencies-table', () => ({
+  default: () => <div data-testid="dependencies-table" />,
+}));
 vi.mock('./task-details-form', () => ({ default: () => <div data-testid="task-details-form" /> }));
 vi.mock('./comments/task-comments', () => ({ default: () => <div data-testid="task-comments" /> }));
 vi.mock('./details/task-drawer-custom-fields/task-drawer-custom-fields', () => ({
@@ -19,7 +28,10 @@ vi.mock('@/hooks/useAppSelector', () => ({
   useAppSelector: (selector: (state: unknown) => unknown) =>
     selector({
       themeReducer: { mode: 'light' },
-      projectReducer: { projectId: 'project-1' },
+      projectReducer: {
+        projectId: 'project-1',
+        project: { project_type: mockDrawerState.projectType },
+      },
       taskDrawerReducer: {
         loadingTask: false,
         selectedTaskId: 'task-1',
@@ -41,10 +53,14 @@ vi.mock('@/hooks/useAppSumoTracking', () => ({
 vi.mock('@/hooks/useMixpanelTracking', () => ({
   useMixpanelTracking: () => ({ trackMixpanelEvent: vi.fn() }),
 }));
-vi.mock('@/socket/socketContext', () => ({ useSocket: () => ({ socket: null, connected: false }) }));
+vi.mock('@/socket/socketContext', () => ({
+  useSocket: () => ({ socket: null, connected: false }),
+}));
 vi.mock('@/utils/subscription-utils', () => ({ hasBusinessFeatureAccess: () => true }));
 
-vi.mock('@/features/tasks/tasks.slice', () => ({ fetchTask: vi.fn(() => ({ type: 'tasks/fetchTask' })) }));
+vi.mock('@/features/tasks/tasks.slice', () => ({
+  fetchTask: vi.fn(() => ({ type: 'tasks/fetchTask' })),
+}));
 vi.mock('@/features/admin-center/admin-center.slice', () => ({
   toggleUpgradeModal: vi.fn(() => ({ type: 'ui/toggleUpgradeModal' })),
 }));
@@ -55,9 +71,10 @@ vi.mock('@/features/task-management/task-management.slice', () => ({
 vi.mock('@/api/tasks/task-attachments.api.service', () => ({
   default: {
     getTaskAttachments: vi.fn().mockResolvedValue({ done: true, body: [] }),
-    presignTaskAttachment: vi
-      .fn()
-      .mockResolvedValue({ done: true, body: { file_id: 'file-1', upload_url: 'https://upload.test' } }),
+    presignTaskAttachment: vi.fn().mockResolvedValue({
+      done: true,
+      body: { file_id: 'file-1', upload_url: 'https://upload.test' },
+    }),
     uploadDirect: vi.fn().mockResolvedValue(undefined),
     confirmTaskAttachment: vi.fn().mockResolvedValue({ done: true, body: { id: 'attachment-1' } }),
   },
@@ -76,7 +93,9 @@ vi.mock('@/api/tasks/task-dependencies.api.service', () => ({
 
 import TaskDrawerInfoTab from './task-drawer-info-tab';
 
-const t = ((key: string, opts?: { defaultValue?: string }) => opts?.defaultValue ?? key) as TFunction;
+const t = ((key: string, opts?: { defaultValue?: string }) =>
+  opts?.defaultValue ?? key) as TFunction;
+const render = (ui: React.ReactElement) => renderComponent(ui, { wrapper: MemoryRouter });
 
 const pasteFile = (target: Element) => {
   const file = new File([new Uint8Array(16)], 'pasted.txt', { type: 'text/plain' });
@@ -92,6 +111,17 @@ const pasteFile = (target: Element) => {
 };
 
 describe('TaskDrawerInfoTab', () => {
+  it('retains subtasks, dependencies and attachments for software issues', async () => {
+    mockDrawerState.projectType = 'software';
+    try {
+      render(<TaskDrawerInfoTab t={t} canCreateTask />);
+      expect(await screen.findByText('Dependencies')).toBeInTheDocument();
+      expect(screen.getByText('Attachments')).toBeInTheDocument();
+      expect(screen.getByTestId('subtask-table')).toBeInTheDocument();
+    } finally {
+      mockDrawerState.projectType = 'general';
+    }
+  });
   it('reveals the attachments section after a valid paste', async () => {
     const { container } = render(<TaskDrawerInfoTab t={t} canCreateTask />);
 

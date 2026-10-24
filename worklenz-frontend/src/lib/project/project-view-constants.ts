@@ -6,10 +6,7 @@ import { isFreeUser } from '@/utils/subscription-utils';
 import { isUserGuest } from './project-view-guest';
 import { ILocalSession } from '@/types/auth/local-session.types';
 import { IProjectViewModel } from '@/types/project/projectViewModel.types';
-import {
-  getSoftwareProjectLabels,
-  isSoftwareProjectType,
-} from '@/lib/project/software-project';
+import { getSoftwareProjectLabels, isSoftwareProjectType } from '@/lib/project/software-project';
 
 // Import core components synchronously to avoid suspense in main tabs
 import ProjectViewEnhancedBoard from '@/pages/projects/projectView/enhancedBoard/project-view-enhanced-board';
@@ -291,12 +288,6 @@ const GUEST_RESTRICTED_VIEWS = [
   'docs',
 ];
 
-/**
- * Tabs hidden for software projects. Links to a hidden tab (e.g. `tab=finance`)
- * fall back to the first available tab, which is the Backlog.
- */
-const SOFTWARE_HIDDEN_VIEWS = ['finance', 'workload'];
-
 const SOFTWARE_ONLY_VIEWS = ['backlog', 'releases', 'reports'];
 
 /** Tabs shown in the software project tab bar; the rest are listed under "More". */
@@ -313,6 +304,9 @@ const SOFTWARE_TAB_ORDER = [
   'all-attachments',
   'members',
   'updates',
+  'docs',
+  'workload',
+  'finance',
 ];
 
 // Function to get filtered tab items based on user permissions
@@ -336,10 +330,6 @@ export const getFilteredTabItems = (
       // If user is a guest, only show allowed views (Task List, Board, and Members)
       if (isGuest && GUEST_RESTRICTED_VIEWS.includes(item.key)) {
         return null; // Hide restricted views for guests
-      }
-
-      if (isSoftware && SOFTWARE_HIDDEN_VIEWS.includes(item.key)) {
-        return null;
       }
 
       if (item.key === 'docs' && currentProject?.permissions && !currentProject.permissions.docs) {

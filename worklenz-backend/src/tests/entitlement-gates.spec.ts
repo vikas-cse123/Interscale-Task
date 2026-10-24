@@ -73,6 +73,19 @@ describe("canUseFeature: client portal in self-hosted deployments", () => {
       expect(canUseFeature(free, feature)).toBe(true);
     }
   });
+
+  it.each(["off", "on"])("grants project feature availability with enforcement %s without admitting anonymous users", enforcement => {
+    process.env.WORKLENZ_DEPLOYMENT_MODE = "self_hosted";
+    process.env.ENTITLEMENTS_ENFORCE = enforcement;
+    for (const feature of ["finance_module", "planner_schedule", "planner_timeline", "planner_workload", "task_export", "project_phases"] as const) {
+      expect(canUseFeature(free, feature)).toBe(true);
+      const anonymousResponse = makeRes();
+      const next = jest.fn();
+      requireFeature(feature)({} as never, anonymousResponse, next);
+      expect(anonymousResponse.status).toHaveBeenCalledWith(401);
+      expect(next).not.toHaveBeenCalled();
+    }
+  });
 });
 
 describe("canUseFeature: enforce mode", () => {

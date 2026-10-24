@@ -16,11 +16,16 @@ const ENUM_MIGRATIONS = [
   "1790679600000_add_french_language_to_enum",
 ];
 
-function loadMigration(name: string): { up: (pgm: unknown) => Promise<unknown> } {
+interface EnumMigrationPgm {
+  noTransaction(): void;
+  sql(statement: string): void;
+}
+
+function loadMigration(name: string): { up: (pgm: EnumMigrationPgm) => Promise<unknown> } {
   // Migration files are plain CommonJS with no side effects on require.
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const mod = require(`../../database/pg-migrations/${name}.js`) as {
-    up?: (pgm: unknown) => Promise<unknown>;
+    up?: (pgm: EnumMigrationPgm) => Promise<unknown>;
   };
   if (typeof mod.up !== "function") {
     throw new Error(`Migration ${name} does not export an up() function`);
