@@ -898,9 +898,8 @@ export const CreateProjectModal = ({
                         defaultValue: 'Template structure will be copied into your project.',
                       })
                     : isSoftwareProject
-                      ? t('blankSoftwareSelectedHint', {
-                          defaultValue:
-                            'Blank software project with issue tracking defaults. Templates are not used for Software projects.',
+                      ? t('blankSoftwareProjectDesc', {
+                          defaultValue: 'Empty software project with issue and sprint defaults.',
                         })
                       : t('blankSelectedHint', {
                           defaultValue:

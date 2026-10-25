@@ -94,6 +94,7 @@ describe('Software project creation sources', () => {
     );
     await screen.findByText('Existing template');
     fireEvent.click(screen.getByText('Software'));
+    expect(screen.queryByText(/Templates are not used for Software projects/)).not.toBeInTheDocument();
     fireEvent.change(screen.getByRole('textbox', { name: 'Project name' }), {
       target: { value: 'Software CSV' },
     });
