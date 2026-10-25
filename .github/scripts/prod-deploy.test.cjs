@@ -94,3 +94,20 @@ test('image gate accepts skipped unchanged services but rejects failures and can
   assert.match(workflow, /AVAILABLE_BYTES.*-ge.*REQUIRED_BYTES/);
   assert.match(workflow, /prod-deploy-incoming\/\$\{\{ github.run_id \}\}-\$\{\{ github.run_attempt \}\}/);
 });
+
+test('deployment runs after successful builds despite a skipped transitive service gate', () => {
+  const workflow = fs.readFileSync(path.join(__dirname, '../workflows/deploy-production.yaml'), 'utf8');
+  const condition = workflow.match(/  deploy:[\s\S]*?    if: >-\r?\n([\s\S]*?)    runs-on:/)[1];
+  assert.match(condition, /always\(\)/);
+  const expression = condition.replace(/always\(\)/g, 'true')
+    .replace(/cancelled\(\)/g, 'cancelled')
+    .replace(/needs\.([a-z-]+)\.result/g, (_, job) => 'results[' + JSON.stringify(job) + ']')
+    .replace(/needs\.changes\.outputs\.([a-z_]+)/g, (_, key) => 'outputs[' + JSON.stringify(key) + ']');
+  const evaluate = new Function('results', 'outputs', 'cancelled', 'return (' + expression + ');');
+  const results = { changes: 'success', 'build-images': 'success' };
+  const outputs = { frontend: 'true', backend: 'true', client_portal: 'false' };
+  assert.equal(evaluate(results, outputs, false), true);
+  assert.equal(evaluate({ ...results, 'build-images': 'failure' }, outputs, false), false);
+  assert.equal(evaluate({ ...results, 'build-images': 'skipped' }, outputs, false), false);
+  assert.equal(evaluate(results, outputs, true), false);
+});
