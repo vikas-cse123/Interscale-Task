@@ -83,7 +83,7 @@ container_for() {
 check_container_running() {
   local container="$1"
   local state
-  state="$(docker inspect -f '{{.State.Status}} {{.Restarting}}' "$container" 2>/dev/null || echo MISSING)"
+  state="$(docker inspect -f '{{.State.Status}} {{.State.Restarting}}' "$container" 2>/dev/null || echo MISSING)"
   [ "$state" = "running false" ]
 }
 

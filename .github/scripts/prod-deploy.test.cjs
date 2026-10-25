@@ -21,6 +21,7 @@ function runDeployment(failHealth = false) {
   const docker = [
     '#!/bin/bash', 'set -eu', 'echo "$*" >> "$TEST_LOG"',
     'if [ "$1" = inspect ]; then',
+    '  if [[ "$3" == *State.Status* && "$3" != *State.Restarting* ]]; then echo "invalid Docker state template" >&2; exit 1; fi',
     '  if [[ "$3" == *State.Status* ]]; then echo "running false"; else echo "sha256:old-$4"; fi',
     'elif [ "$1" = tag ] && [[ "$2" == *ci-backup* ]]; then touch "$TEST_RESTORED"',
     'elif [ "$1" = image ] && [ "$2" = inspect ] && [[ "$*" == *--format* ]]; then echo "sha256:new"',
@@ -51,6 +52,7 @@ test('preserves running images before loading and recreates only requested servi
   const { root, result, calls } = runDeployment();
   try {
     assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.ok(calls.some(line => line.includes("{{.State.Status}} {{.State.Restarting}}")));
     const load = calls.findIndex(line => line.startsWith('load '));
     for (const service of ['frontend', 'backend']) {
       const snapshot = calls.findIndex(line => line.startsWith('tag sha256:old-worklenz_' + service + ' '));
